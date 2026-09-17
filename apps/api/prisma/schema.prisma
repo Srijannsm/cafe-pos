@@ -1,0 +1,168 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  cashier
+  waiter
+}
+
+enum TableStatus {
+  free
+  occupied
+  reserved
+}
+
+enum OrderType {
+  dine_in
+  takeaway
+}
+
+enum OrderStatus {
+  pending
+  preparing
+  served
+  billed
+  paid
+}
+
+enum OrderItemStatus {
+  pending
+  ready
+  served
+}
+
+enum PaymentMethod {
+  cash
+  esewa_qr
+  khalti_qr
+  fonepay_qr
+}
+
+model User {
+  id   Int    @id @default(autoincrement())
+  name String
+  // Always store bcrypt hash, never plain text — see docs/security-notes.md
+  pinHash String
+  role    Role
+
+  orders Order[]
+
+  @@map("users")
+}
+
+model RestaurantTable {
+  id          Int         @id @default(autoincrement())
+  tableNumber String
+  capacity    Int
+  status      TableStatus @default(free)
+
+  orders Order[]
+
+  @@map("restaurant_tables")
+}
+
+model MenuCategory {
+  id        Int    @id @default(autoincrement())
+  name      String
+  sortOrder Int
+
+  menuItems MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          Int      @id @default(autoincrement())
+  name        String
+  price       Decimal
+  isAvailable Boolean  @default(true)
+  categoryId  Int
+
+  category   MenuCategory @relation(fields: [categoryId], references: [id])
+  modifiers  Modifier[]
+  orderItems OrderItem[]
+
+  @@map("menu_items")
+}
+
+model Modifier {
+  id         Int     @id @default(autoincrement())
+  name       String
+  priceDelta Decimal
+  menuItemId Int
+
+  menuItem           MenuItem            @relation(fields: [menuItemId], references: [id])
+  orderItemModifiers OrderItemModifier[]
+
+  @@map("modifiers")
+}
+
+model Order {
+  id        Int         @id @default(autoincrement())
+  orderType OrderType
+  status    OrderStatus @default(pending)
+  total     Decimal?
+  createdAt DateTime    @default(now())
+  tableId   Int
+  waiterId  Int
+
+  table      RestaurantTable @relation(fields: [tableId], references: [id])
+  waiter     User            @relation(fields: [waiterId], references: [id])
+  orderItems OrderItem[]
+  payments   Payment[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id         Int             @id @default(autoincrement())
+  quantity   Int             @default(1)
+  price      Decimal
+  status     OrderItemStatus @default(pending)
+  orderId    Int
+  menuItemId Int
+
+  order              Order               @relation(fields: [orderId], references: [id])
+  menuItem           MenuItem            @relation(fields: [menuItemId], references: [id])
+  orderItemModifiers OrderItemModifier[]
+
+  @@map("order_items")
+}
+
+model OrderItemModifier {
+  id          Int @id @default(autoincrement())
+  orderItemId Int
+  modifierId  Int
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  modifier  Modifier  @relation(fields: [modifierId], references: [id])
+
+  @@unique([orderItemId, modifierId])
+  @@map("order_item_modifiers")
+}
+
+model Payment {
+  id      Int           @id @default(autoincrement())
+  amount  Decimal
+  method  PaymentMethod
+  paidAt  DateTime      @default(now())
+  orderId Int
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
