@@ -11,7 +11,7 @@ export class TablesService {
     });
 
     const activeOrders = await this.prisma.order.findMany({
-      where: { status: { not: 'paid' } },
+      where: { status: { notIn: ['paid', 'cancelled'] } },
       select: { id: true, tableId: true, status: true },
     });
 

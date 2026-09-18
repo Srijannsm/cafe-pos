@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetchJson, getCurrentUser } from "../../../lib/api";
 import { useRequireAuth } from "../../../lib/useRequireAuth";
 import { NavBar } from "../../../components/NavBar";
+import { IconAlert, IconBanknote, IconCheck, IconInfo, IconQrCode } from "../../../components/icons";
 
 type OrderItem = {
   id: number;
@@ -21,10 +22,10 @@ type Order = {
 };
 
 const PAYMENT_METHODS = [
-  { value: "cash", label: "Cash" },
-  { value: "esewa_qr", label: "eSewa QR" },
-  { value: "khalti_qr", label: "Khalti QR" },
-  { value: "fonepay_qr", label: "FonePay QR" },
+  { value: "cash", label: "Cash", icon: IconBanknote },
+  { value: "esewa_qr", label: "eSewa QR", icon: IconQrCode },
+  { value: "khalti_qr", label: "Khalti QR", icon: IconQrCode },
+  { value: "fonepay_qr", label: "FonePay QR", icon: IconQrCode },
 ] as const;
 
 export default function BillingPage({ params }: { params: Promise<{ orderId: string }> }) {
@@ -33,6 +34,8 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
   const ready = useRequireAuth();
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState("");
+  const [billing, setBilling] = useState(false);
+  const [payingMethod, setPayingMethod] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -46,16 +49,20 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
 
   async function handleGenerateBill() {
     setError("");
+    setBilling(true);
     try {
       await apiFetchJson(`/orders/${orderId}/bill`, { method: "PATCH" });
       await refresh();
     } catch {
       setError("Could not generate the bill.");
+    } finally {
+      setBilling(false);
     }
   }
 
   async function handlePay(method: string) {
     setError("");
+    setPayingMethod(method);
     try {
       await apiFetchJson(`/orders/${orderId}/pay`, {
         method: "PATCH",
@@ -65,70 +72,125 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
       await refresh();
     } catch {
       setError("Could not record payment.");
+    } finally {
+      setPayingMethod(null);
     }
   }
 
-  if (!ready || !order) return <main className="p-6">Loading order...</main>;
+  if (!ready || !order) {
+    return (
+      <main className="min-h-screen">
+        <NavBar />
+        <div className="mx-auto max-w-md p-4 sm:p-6">
+          <div className="h-96 animate-pulse rounded-2xl bg-stone-200" />
+        </div>
+      </main>
+    );
+  }
 
   const role = getCurrentUser()?.role;
   const canBill = role === "admin" || role === "cashier";
 
+  if (order.status === "paid") {
+    return (
+      <main className="min-h-screen">
+        <NavBar />
+        <div className="mx-auto flex max-w-md flex-col items-center gap-4 p-6 pt-16 text-center">
+          <div className="animate-pop flex h-20 w-20 items-center justify-center rounded-full bg-success-subtle">
+            <IconCheck className="h-10 w-10 text-success-subtle-fg" />
+          </div>
+          <h1 className="text-2xl font-bold text-stone-900">Payment received</h1>
+          <p className="text-stone-500">
+            {order.table.tableNumber} · Order #{order.id}
+            {order.total && (
+              <>
+                {" "}
+                · <span className="font-semibold text-stone-700">रु {order.total}</span>
+              </>
+            )}
+          </p>
+          <button onClick={() => router.push("/")} className="btn btn-primary mt-4 w-full">
+            Back to tables
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen">
       <NavBar />
-      <div className="mx-auto max-w-md p-6">
-        <h1 className="mb-1 text-2xl font-semibold">
-          {order.table.tableNumber} — Order #{order.id}
-        </h1>
-        <p className="mb-4 text-sm font-semibold uppercase text-gray-500">{order.status}</p>
+      <div className="mx-auto max-w-md p-4 sm:p-6">
+        {/* Receipt card */}
+        <div className="card overflow-hidden">
+          <div className="border-b-2 border-dashed border-stone-200 p-5 text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-stone-400">Cafe POS</p>
+            <h1 className="mt-1 text-xl font-bold text-stone-900">{order.table.tableNumber}</h1>
+            <p className="text-sm text-stone-500">Order #{order.id}</p>
+            <span className="badge mt-2 bg-stone-200 text-stone-700">{order.status}</span>
+          </div>
 
-        <div className="mb-6 grid gap-2">
-          {order.orderItems.map((item) => (
-            <div key={item.id} className="rounded-lg bg-gray-50 p-3">
-              {item.quantity}x {item.menuItem.name}
-            </div>
-          ))}
-        </div>
-
-        {order.total && <p className="mb-4 text-lg font-semibold">Total: रु {order.total}</p>}
-
-        {(order.status === "served" || order.status === "billed") && !canBill && (
-          <p className="text-gray-600">
-            This order is ready to be billed — please ask a cashier to complete this.
-          </p>
-        )}
-
-        {order.status === "served" && canBill && (
-          <button onClick={handleGenerateBill} className="rounded-lg bg-blue-600 px-6 py-2 text-white">
-            Generate bill
-          </button>
-        )}
-
-        {order.status === "billed" && canBill && (
-          <div className="grid gap-2">
-            <p className="text-sm text-gray-600">Select payment method:</p>
-            {PAYMENT_METHODS.map((method) => (
-              <button
-                key={method.value}
-                onClick={() => handlePay(method.value)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-left hover:bg-gray-50"
-              >
-                {method.label}
-              </button>
+          <div className="space-y-2 p-5">
+            {order.orderItems.map((item) => (
+              <div key={item.id} className="flex items-baseline justify-between text-sm">
+                <span className="text-stone-700">
+                  {item.quantity}× {item.menuItem.name}
+                </span>
+                <span className="flex-1 border-b border-dotted border-stone-300 mx-2 translate-y-[-3px]" />
+              </div>
             ))}
           </div>
-        )}
 
-        {order.status === "paid" && (
-          <div>
-            <p className="mb-4 font-medium text-green-600">Paid ✓</p>
-            <button onClick={() => router.push("/")} className="rounded-lg bg-gray-800 px-6 py-2 text-white">
-              Back to tables
+          {order.total && (
+            <div className="flex items-center justify-between border-t-2 border-dashed border-stone-200 px-5 py-4">
+              <span className="text-sm font-bold uppercase tracking-wide text-stone-500">Total</span>
+              <span className="tabular-nums text-xl font-bold text-stone-900">रु {order.total}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6">
+          {(order.status === "served" || order.status === "billed") && !canBill && (
+            <div className="flex items-center gap-2 rounded-xl bg-info-subtle px-4 py-3 text-sm font-medium text-info-subtle-fg">
+              <IconInfo className="h-5 w-5 shrink-0" />
+              This order is ready to be billed — please ask a cashier to complete this.
+            </div>
+          )}
+
+          {order.status === "served" && canBill && (
+            <button onClick={handleGenerateBill} disabled={billing} className="btn btn-primary w-full">
+              {billing ? "Generating bill…" : "Generate bill"}
             </button>
+          )}
+
+          {order.status === "billed" && canBill && (
+            <div>
+              <p className="mb-3 text-sm font-semibold text-stone-500">Select payment method</p>
+              <div className="grid grid-cols-2 gap-3">
+                {PAYMENT_METHODS.map((method) => (
+                  <button
+                    key={method.value}
+                    onClick={() => handlePay(method.value)}
+                    disabled={payingMethod !== null}
+                    className="card flex flex-col items-center gap-2 p-4 transition hover:border-primary hover:bg-primary-subtle active:scale-95 disabled:opacity-50"
+                  >
+                    <method.icon className="h-6 w-6 text-stone-600" />
+                    <span className="text-sm font-semibold text-stone-800">
+                      {payingMethod === method.value ? "Recording…" : method.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl bg-danger-subtle px-3 py-2 text-sm font-medium text-danger-subtle-fg">
+            <IconAlert className="h-4 w-4 shrink-0" />
+            {error}
           </div>
         )}
-
-        {error && <p className="mt-4 text-red-600">{error}</p>}
       </div>
     </main>
   );

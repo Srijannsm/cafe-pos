@@ -65,6 +65,12 @@ export class OrdersService {
       throw new NotFoundException(`Order ${orderId} does not exist`);
     }
 
+    if (order.status !== 'pending') {
+      throw new BadRequestException(
+        `Cannot add items to an order with status "${order.status}"`,
+      );
+    }
+
     const menuItem = await this.prisma.menuItem.findUnique({
       where: { id: dto.menuItemId },
     });
