@@ -10,6 +10,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
 
+  if (res.status === 401) {
+    logout();
+    window.location.href = "/login";
+    throw new Error(`API request failed: ${res.status} ${res.statusText} (${path})`);
+  }
+
   if (!res.ok) {
     throw new Error(`API request failed: ${res.status} ${res.statusText} (${path})`);
   }
@@ -20,4 +26,21 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 export async function apiFetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await apiFetch(path, options);
   return res.json() as Promise<T>;
+}
+
+export type CurrentUser = {
+  id: number;
+  name: string;
+  role: string;
+};
+
+export function getCurrentUser(): CurrentUser | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem("currentUser");
+  return raw ? JSON.parse(raw) : null;
+}
+
+export function logout() {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("currentUser");
 }

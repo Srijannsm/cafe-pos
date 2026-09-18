@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { MenuController } from './menu.controller.js';
-import { MenuService } from './menu.service.js';
+import { TablesController } from './tables.controller.js';
+import { TablesService } from './tables.service.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { AuthModule } from '../auth/auth.module.js';
 
 @Module({
   imports: [PrismaModule, AuthModule],
-  controllers: [MenuController],
-  providers: [MenuService],
+  controllers: [TablesController],
+  providers: [TablesService],
 })
-export class MenuModule {}
+export class TablesModule {}

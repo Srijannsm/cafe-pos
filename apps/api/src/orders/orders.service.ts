@@ -3,11 +3,27 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
 import { RecordPaymentDto } from './dto/record-payment.dto.js';
-import { Prisma } from '../generated/prisma/client.js';
+import { Prisma, OrderStatus } from '../generated/prisma/client.js';
 
 @Injectable()
 export class OrdersService {
   constructor(private prisma: PrismaService) {}
+
+  async findAll(status?: OrderStatus) {
+    return this.prisma.order.findMany({
+      where: status ? { status } : undefined,
+      include: {
+        orderItems: {
+          include: {
+            menuItem: true,
+            orderItemModifiers: { include: { modifier: true } },
+          },
+        },
+        table: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
 
   async create(dto: CreateOrderDto) {
     const table = await this.prisma.restaurantTable.findUnique({
@@ -86,6 +102,7 @@ export class OrdersService {
   async sendToKitchen(orderId: number) {
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },
+    include: { orderItems: true },
   });
 
   if (!order) {
@@ -95,6 +112,12 @@ export class OrdersService {
   if (order.status !== 'pending') {
     throw new BadRequestException(
       `Order ${orderId} cannot be sent to kitchen from status "${order.status}"`,
+    );
+  }
+
+  if (order.orderItems.length === 0) {
+    throw new BadRequestException(
+      `Order ${orderId} has no items — add at least one item before sending to kitchen`,
     );
   }
 
@@ -143,6 +166,36 @@ export class OrdersService {
   return this.prisma.order.update({
     where: { id: orderId },
     data: { status: 'served' },
+  });
+}
+
+    async cancel(orderId: number) {
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw new NotFoundException(`Order ${orderId} does not exist`);
+  }
+
+  if (order.status !== 'pending') {
+    throw new BadRequestException(
+      `Order ${orderId} cannot be cancelled from status "${order.status}" — cancellation is only allowed before the order is sent to kitchen`,
+    );
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    const cancelledOrder = await tx.order.update({
+      where: { id: orderId },
+      data: { status: 'cancelled' },
+    });
+
+    await tx.restaurantTable.update({
+      where: { id: order.tableId },
+      data: { status: 'free' },
+    });
+
+    return cancelledOrder;
   });
 }
 
@@ -223,6 +276,30 @@ export class OrdersService {
 
     return payment;
   });
+}
+
+  async findOne(orderId: number) {
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      orderItems: {
+        include: {
+          menuItem: true,
+          orderItemModifiers: {
+            include: { modifier: true },
+          },
+        },
+      },
+      table: true,
+      waiter: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!order) {
+    throw new NotFoundException(`Order ${orderId} does not exist`);
+  }
+
+  return order;
 }
 
 }

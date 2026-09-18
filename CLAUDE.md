@@ -54,7 +54,10 @@ SaaS product after the first client's system is stable.
 - Full stack background: Django, Laravel, NestJS, Next.js, React Native, PostgreSQL
 
 ## Not yet built (do not assume these exist)
-- Authentication/login system
 - WebSocket real-time sync
-- Order/billing endpoints
-- Frontend pages (Next.js app still has Turborepo's default template content)
+
+## Known gaps (tracked, not urgent for MVP)
+- No real automated test coverage — NestJS's auto-generated .spec.ts files
+  exist but were never filled in with real logic, and currently fail since
+  they don't provide PrismaService. Acceptable tradeoff for MVP timeline,
+  but should be addressed before this scales to multiple clients.

@@ -37,6 +37,7 @@ enum OrderStatus {
   served
   billed
   paid
+  cancelled
 }
 
 enum OrderItemStatus {
@@ -53,11 +54,11 @@ enum PaymentMethod {
 }
 
 model User {
-  id   Int    @id @default(autoincrement())
-  name String
-  // Always store bcrypt hash, never plain text — see docs/security-notes.md
-  pinHash String
-  role    Role
+  id       Int     @id @default(autoincrement())
+  name     String  @unique
+  pinHash  String
+  role     Role
+  isActive Boolean @default(true)
 
   orders Order[]
 
@@ -77,7 +78,7 @@ model RestaurantTable {
 
 model MenuCategory {
   id        Int    @id @default(autoincrement())
-  name      String
+  name      String @unique
   sortOrder Int
 
   menuItems MenuItem[]
@@ -87,7 +88,7 @@ model MenuCategory {
 
 model MenuItem {
   id          Int      @id @default(autoincrement())
-  name        String
+  name        String   @unique
   price       Decimal
   isAvailable Boolean  @default(true)
   categoryId  Int
