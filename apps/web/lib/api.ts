@@ -17,7 +17,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   if (!res.ok) {
-    throw new Error(`API request failed: ${res.status} ${res.statusText} (${path})`);
+    const serverMessage = await res
+      .json()
+      .then((body: { message?: string | string[] }) =>
+        typeof body?.message === "string" ? body.message : Array.isArray(body?.message) ? body.message.join(", ") : null,
+      )
+      .catch(() => null);
+    throw new Error(serverMessage ?? `API request failed: ${res.status} ${res.statusText} (${path})`);
   }
 
   return res;

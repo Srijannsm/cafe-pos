@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { MenuService } from './menu.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
@@ -8,6 +8,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto.js';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto.js';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
+import { UpdateModifierDto } from './dto/update-modifier.dto.js';
 
 @Controller('menu')
 export class MenuController {
@@ -66,5 +67,19 @@ export class MenuController {
     @Post(':id/modifiers')
     addModifier(@Param('id', ParseIntPipe) id: number, @Body() dto: CreateModifierDto) {
         return this.menuService.addModifier(id, dto);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Patch('modifiers/:id')
+    updateModifier(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateModifierDto) {
+        return this.menuService.updateModifier(id, dto);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Delete('modifiers/:id')
+    removeModifier(@Param('id', ParseIntPipe) id: number) {
+        return this.menuService.removeModifier(id);
     }
 }

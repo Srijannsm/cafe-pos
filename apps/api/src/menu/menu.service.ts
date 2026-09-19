@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { UpdateCategoryDto } from './dto/update-category.dto.js';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto.js';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
+import { UpdateModifierDto } from './dto/update-modifier.dto.js';
 
 @Injectable()
 export class MenuService {
@@ -50,6 +51,30 @@ export class MenuService {
   async addModifier(menuItemId: number, dto: CreateModifierDto) {
     await this.findMenuItemOrThrow(menuItemId);
     return this.prisma.modifier.create({ data: { ...dto, menuItemId } });
+  }
+
+  async updateModifier(id: number, dto: UpdateModifierDto) {
+    await this.findModifierOrThrow(id);
+    return this.prisma.modifier.update({ where: { id }, data: dto });
+  }
+
+  async removeModifier(id: number) {
+    await this.findModifierOrThrow(id);
+    const usageCount = await this.prisma.orderItemModifier.count({ where: { modifierId: id } });
+    if (usageCount > 0) {
+      throw new BadRequestException(
+        `Modifier ${id} is used on ${usageCount} existing order item(s) and cannot be deleted`,
+      );
+    }
+    return this.prisma.modifier.delete({ where: { id } });
+  }
+
+  private async findModifierOrThrow(id: number) {
+    const modifier = await this.prisma.modifier.findUnique({ where: { id } });
+    if (!modifier) {
+      throw new NotFoundException(`Modifier ${id} does not exist`);
+    }
+    return modifier;
   }
 
   private async findMenuItemOrThrow(id: number) {

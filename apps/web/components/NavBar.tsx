@@ -41,6 +41,9 @@ export function NavBar() {
           <Link href="/kitchen" className={linkClass("/kitchen")}>
             Kitchen
           </Link>
+          <Link href="/billing" className={linkClass("/billing")}>
+            Billing
+          </Link>
           {user?.role === "admin" && (
             <Link href="/admin" className={linkClass("/admin")}>
               Admin
