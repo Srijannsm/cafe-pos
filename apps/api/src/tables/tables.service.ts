@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { CreateTableDto } from './dto/create-table.dto.js';
+import { UpdateTableDto } from './dto/update-table.dto.js';
 
 @Injectable()
 export class TablesService {
@@ -23,5 +25,17 @@ export class TablesService {
         activeOrderStatus: activeOrder?.status ?? null,
       };
     });
+  }
+
+  createTable(dto: CreateTableDto) {
+    return this.prisma.restaurantTable.create({ data: dto });
+  }
+
+  async updateTable(id: number, dto: UpdateTableDto) {
+    const table = await this.prisma.restaurantTable.findUnique({ where: { id } });
+    if (!table) {
+      throw new NotFoundException(`Table ${id} does not exist`);
+    }
+    return this.prisma.restaurantTable.update({ where: { id }, data: dto });
   }
 }

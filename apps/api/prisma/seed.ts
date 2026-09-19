@@ -52,6 +52,13 @@ async function main() {
     create: { name: 'Sita', pinHash: cashierPinHash, role: 'cashier' },
   });
 
+  const adminPinHash = await bcrypt.hash('9999', 10);
+await prisma.user.upsert({
+  where: { name: 'Admin' },
+  update: {},
+  create: { name: 'Admin', pinHash: adminPinHash, role: 'admin' },
+});
+
   console.log('Seed data is up to date.');
 }
 
