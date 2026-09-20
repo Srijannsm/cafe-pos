@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type CurrentUser } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
 import { IconGrid, IconClipboardList, IconTable, IconBell, IconLogout, IconClock } from "../../components/icons";
+import { NavItem } from "../../components/ui/NavItem";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: IconGrid },
@@ -44,71 +44,52 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!ready || !authorized || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-stone-100">
-        <div className="h-8 w-40 animate-pulse rounded-lg bg-stone-200" />
+      <div className="flex min-h-screen items-center justify-center bg-surface-canvas">
+        <div className="h-8 w-40 animate-pulse rounded-md bg-surface-sunken" />
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-stone-100">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
-        <div className="flex items-center gap-2 border-b border-stone-200 px-5 py-5">
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+    <div className="flex min-h-screen bg-surface-canvas">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-surface-raised">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-5 py-5">
+          <span className="h-2.5 w-2.5 rounded-full bg-brand" />
           <div>
-            <div className="text-sm font-bold text-stone-900">Cafe POS</div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-stone-400">Admin</div>
+            <div className="font-display text-sm font-bold text-ink-primary">Cafe POS</div>
+            <div className="label-sm text-ink-faint">Admin</div>
           </div>
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
-          {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href;
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                  isActive
-                    ? "bg-primary-subtle text-primary-subtle-fg"
-                    : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
-                }`}
-              >
-                <Icon />
-                {item.label}
-              </Link>
-            );
-          })}
+          {NAV_ITEMS.map((item) => (
+            <NavItem
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              icon={item.icon}
+              active={pathname === item.href}
+            />
+          ))}
         </nav>
 
-        <div className="border-t border-stone-200 p-3">
-          <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-stone-400">Floor views</p>
+        <div className="border-t border-border-subtle p-3">
+          <p className="label-sm px-3 pb-1 text-ink-faint">Floor views</p>
           <div className="space-y-1">
-            {FLOOR_LINKS.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-stone-600 transition hover:bg-stone-100 hover:text-stone-900"
-                >
-                  <Icon />
-                  {item.label}
-                </Link>
-              );
-            })}
+            {FLOOR_LINKS.map((item) => (
+              <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} active={false} />
+            ))}
           </div>
         </div>
 
-        <div className="border-t border-stone-200 px-5 py-4 text-xs text-stone-400">Powered by Cafe POS</div>
+        <div className="body-sm border-t border-border-subtle px-5 py-4 text-ink-faint">Powered by Cafe POS</div>
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center justify-end gap-3 border-b border-stone-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-30 flex items-center justify-end gap-3 border-b border-border-subtle bg-surface-raised/95 px-4 py-3 backdrop-blur sm:px-6">
           <button
             type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-ink-secondary transition hover:bg-surface-sunken hover:text-ink-primary"
             aria-label="Notifications"
           >
             <IconBell />
@@ -118,12 +99,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <button
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
-              className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 transition hover:bg-stone-100"
+              className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 transition hover:bg-surface-sunken"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-stone-200 text-xs font-bold text-stone-700">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-sunken text-xs font-bold text-ink-secondary">
                 {user.name.charAt(0).toUpperCase()}
               </span>
-              <span className="hidden text-sm font-semibold text-stone-800 sm:inline">{user.name}</span>
+              <span className="hidden text-sm font-semibold text-ink-primary sm:inline">{user.name}</span>
             </button>
 
             {menuOpen && (
@@ -134,11 +115,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   aria-label="Close menu"
                   onClick={() => setMenuOpen(false)}
                 />
-                <div className="absolute right-0 top-full z-20 mt-2 w-40 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-lg">
+                <div className="absolute right-0 top-full z-20 mt-2 w-40 overflow-hidden rounded-lg border border-border-subtle bg-surface-overlay shadow-lg">
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-stone-700 transition hover:bg-stone-50"
+                    className="body-md flex w-full items-center gap-2 px-4 py-2.5 text-left font-medium text-ink-primary transition hover:bg-surface-sunken"
                   >
                     <IconLogout className="h-4 w-4" />
                     Log out

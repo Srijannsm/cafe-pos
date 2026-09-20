@@ -3,17 +3,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetchJson } from "../../../lib/api";
 import { useToast } from "../../../components/Toast";
-import {
-  IconPlus,
-  IconClipboardList,
-  IconSearch,
-  IconEdit,
-  IconCheck,
-  IconX,
-  IconTrash,
-  IconChevronRight,
-} from "../../../components/icons";
+import { IconPlus, IconClipboardList, IconEdit, IconCheck, IconX, IconTrash, IconChevronRight } from "../../../components/icons";
 import { SectionCard } from "../_components/SectionCard";
+import { Input } from "../../../components/ui/Input";
+import { Button } from "../../../components/ui/Button";
+import { StatusBadge } from "../../../components/ui/StatusBadge";
 
 type Category = {
   id: number;
@@ -37,8 +31,8 @@ type MenuItem = {
   modifiers: Modifier[];
 };
 
-const inputClass =
-  "w-full rounded-xl border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle";
+const selectClass =
+  "min-h-12 rounded-sm border border-border-subtle bg-surface-sunken px-3 text-sm text-ink-primary outline-none focus:border-focus-ring focus:ring-2 focus:ring-focus-ring/30";
 
 export default function MenuManagementPage() {
   const { showToast, toastHost } = useToast();
@@ -213,14 +207,14 @@ export default function MenuManagementPage() {
     <div className="space-y-8">
       {toastHost}
       <div>
-        <h1 className="text-3xl font-bold text-stone-900">Menu Management</h1>
-        <p className="mt-1 text-sm text-stone-500">
+        <h1 className="display-md text-ink-primary">Menu Management</h1>
+        <p className="body-md mt-1 text-ink-secondary">
           Manage categories, items, and modifiers. Items are hidden with the availability toggle, never deleted.
         </p>
       </div>
 
       <SectionCard icon={<IconPlus />} title="Add new" description="Create a category, menu item, or modifier.">
-        <div className="mb-5 flex gap-1 border-b border-stone-200">
+        <div className="mb-5 flex gap-1 border-b border-border-subtle">
           {(["category", "item", "modifier"] as const).map((tab) => (
             <button
               key={tab}
@@ -228,8 +222,8 @@ export default function MenuManagementPage() {
               onClick={() => setActiveTab(tab)}
               className={`border-b-2 px-4 py-2.5 text-sm font-semibold capitalize transition ${
                 activeTab === tab
-                  ? "border-primary text-primary"
-                  : "border-transparent text-stone-500 hover:text-stone-700"
+                  ? "border-brand text-brand-strong"
+                  : "border-transparent text-ink-secondary hover:text-ink-primary"
               }`}
             >
               {tab}
@@ -239,38 +233,24 @@ export default function MenuManagementPage() {
 
         {activeTab === "category" && (
           <form onSubmit={handleAddCategory} className="flex flex-col gap-3 sm:max-w-md">
-            <input
-              className={inputClass}
-              placeholder="Name"
-              value={categoryName}
-              onChange={(e) => setCategoryName(e.target.value)}
-              required
-            />
-            <input
-              className={inputClass}
+            <Input placeholder="Name" value={categoryName} onChange={(e) => setCategoryName(e.target.value)} required />
+            <Input
               type="number"
               placeholder="Sort order"
               value={categorySortOrder}
               onChange={(e) => setCategorySortOrder(e.target.value)}
               required
             />
-            <button type="submit" disabled={savingCategory} className="btn btn-primary self-start">
+            <Button type="submit" disabled={savingCategory} className="self-start">
               Add category
-            </button>
+            </Button>
           </form>
         )}
 
         {activeTab === "item" && (
           <form onSubmit={handleAddItem} className="flex flex-col gap-3 sm:max-w-md">
-            <input
-              className={inputClass}
-              placeholder="Name"
-              value={itemName}
-              onChange={(e) => setItemName(e.target.value)}
-              required
-            />
-            <input
-              className={inputClass}
+            <Input placeholder="Name" value={itemName} onChange={(e) => setItemName(e.target.value)} required />
+            <Input
               type="number"
               step="0.01"
               placeholder="Price"
@@ -279,7 +259,7 @@ export default function MenuManagementPage() {
               required
             />
             <select
-              className={inputClass}
+              className={selectClass}
               value={itemCategoryId}
               onChange={(e) => setItemCategoryId(e.target.value)}
               required
@@ -293,16 +273,16 @@ export default function MenuManagementPage() {
                 </option>
               ))}
             </select>
-            <button type="submit" disabled={savingItem} className="btn btn-primary self-start">
+            <Button type="submit" disabled={savingItem} className="self-start">
               Add item
-            </button>
+            </Button>
           </form>
         )}
 
         {activeTab === "modifier" && (
           <form onSubmit={handleAddModifier} className="flex flex-col gap-3 sm:max-w-md">
             <select
-              className={inputClass}
+              className={selectClass}
               value={modifierItemId}
               onChange={(e) => setModifierItemId(e.target.value)}
               required
@@ -318,17 +298,17 @@ export default function MenuManagementPage() {
             </select>
 
             {selectedModifierItem && (
-              <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
-                <p className="text-sm font-semibold text-stone-800">
-                  Adding to &ldquo;{selectedModifierItem.name}&rdquo; · रु {selectedModifierItem.price}
+              <div className="rounded-md border border-border-subtle bg-surface-sunken p-3">
+                <p className="body-md font-semibold text-ink-primary">
+                  Adding to &ldquo;{selectedModifierItem.name}&rdquo; · Rs. {selectedModifierItem.price}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {selectedModifierItem.modifiers.length === 0 ? (
-                    <span className="text-xs text-stone-400">No modifiers yet.</span>
+                    <span className="body-sm text-ink-faint">No modifiers yet.</span>
                   ) : (
                     selectedModifierItem.modifiers.map((m) => (
-                      <span key={m.id} className="badge normal-case bg-stone-200 text-stone-600">
-                        {m.name} +रु {m.priceDelta}
+                      <span key={m.id} className="label-sm rounded-pill bg-surface-raised px-3 py-1 text-ink-secondary normal-case">
+                        {m.name} +Rs. {m.priceDelta}
                       </span>
                     ))
                   )}
@@ -336,15 +316,13 @@ export default function MenuManagementPage() {
               </div>
             )}
 
-            <input
-              className={inputClass}
+            <Input
               placeholder="Name (e.g. Extra Shot)"
               value={modifierName}
               onChange={(e) => setModifierName(e.target.value)}
               required
             />
-            <input
-              className={inputClass}
+            <Input
               type="number"
               step="0.01"
               placeholder="Price delta"
@@ -352,9 +330,9 @@ export default function MenuManagementPage() {
               onChange={(e) => setModifierPriceDelta(e.target.value)}
               required
             />
-            <button type="submit" disabled={savingModifier} className="btn btn-primary self-start">
+            <Button type="submit" disabled={savingModifier} className="self-start">
               Add modifier
-            </button>
+            </Button>
           </form>
         )}
       </SectionCard>
@@ -364,27 +342,21 @@ export default function MenuManagementPage() {
         title="Menu items"
         description="Search, reprice, or hide items without deleting them. Expand a row to manage its modifiers."
       >
-        <div className="relative mb-5 sm:max-w-xs">
-          <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-          <input
-            className="w-full rounded-xl border border-stone-300 py-2 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
-            placeholder="Search items…"
-            value={itemSearch}
-            onChange={(e) => setItemSearch(e.target.value)}
-          />
+        <div className="mb-5 sm:max-w-xs">
+          <Input pill placeholder="Search items…" value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} />
         </div>
 
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-xl bg-stone-200" />
+              <div key={i} className="h-12 animate-pulse rounded-md bg-surface-sunken" />
             ))}
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-stone-200 text-xs font-bold uppercase tracking-wide text-stone-400">
+                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
                   <th className="py-3 pr-4">Name</th>
                   <th className="py-3 pr-4">Category</th>
                   <th className="py-3 pr-4">Price</th>
@@ -401,12 +373,12 @@ export default function MenuManagementPage() {
                   const categoryDraft = categoryDrafts[item.id] ?? String(item.categoryId);
                   return (
                     <Fragment key={item.id}>
-                      <tr className="border-b border-stone-100 last:border-0">
-                        <td className="py-4 pr-4 font-medium text-stone-900">
+                      <tr className="border-b border-border-subtle last:border-0">
+                        <td className="py-4 pr-4 font-medium text-ink-primary">
                           {isEditing ? (
-                            <input
+                            <Input
                               autoFocus
-                              className="w-44 rounded-lg border border-stone-300 px-2.5 py-2 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                              className="w-44"
                               value={nameDraft}
                               onChange={(e) => setNameDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
                             />
@@ -417,7 +389,7 @@ export default function MenuManagementPage() {
                         <td className="py-4 pr-4">
                           {isEditing ? (
                             <select
-                              className="rounded-lg border border-stone-300 px-2.5 py-2 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                              className={selectClass}
                               value={categoryDraft}
                               onChange={(e) => setCategoryDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
                             >
@@ -428,36 +400,32 @@ export default function MenuManagementPage() {
                               ))}
                             </select>
                           ) : (
-                            <span className="badge normal-case bg-stone-100 text-stone-600">{item.category.name}</span>
+                            <span className="label-sm rounded-pill bg-surface-sunken px-3 py-1 text-ink-secondary normal-case">
+                              {item.category.name}
+                            </span>
                           )}
                         </td>
                         <td className="py-4 pr-4">
                           {isEditing ? (
                             <div className="flex items-center gap-1.5">
-                              <span className="text-stone-400">रु</span>
-                              <input
+                              <span className="text-ink-faint">Rs.</span>
+                              <Input
                                 type="number"
                                 step="0.01"
-                                className="w-28 rounded-lg border border-stone-300 px-2.5 py-2 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                                className="w-28"
                                 value={draft}
                                 onChange={(e) => setPriceDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
                               />
                             </div>
                           ) : (
-                            <span className="font-semibold text-stone-800">रु {item.price}</span>
+                            <span className="body-md font-semibold text-ink-primary">Rs. {item.price}</span>
                           )}
                         </td>
                         <td className="py-4 pr-4">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateItem(item, { isAvailable: !item.isAvailable })}
-                            className={`badge normal-case transition active:scale-95 ${
-                              item.isAvailable
-                                ? "bg-success-subtle text-success-subtle-fg hover:bg-emerald-100"
-                                : "bg-stone-200 text-stone-500 hover:bg-stone-300"
-                            }`}
-                          >
-                            {item.isAvailable ? "Available" : "Hidden"}
+                          <button type="button" onClick={() => handleUpdateItem(item, { isAvailable: !item.isAvailable })}>
+                            <StatusBadge tone={item.isAvailable ? "success" : "neutral"}>
+                              {item.isAvailable ? "Available" : "Hidden"}
+                            </StatusBadge>
                           </button>
                         </td>
                         <td className="py-4 pr-0 text-right">
@@ -475,7 +443,7 @@ export default function MenuManagementPage() {
                                     });
                                     setEditingItemId(null);
                                   }}
-                                  className="flex h-9 w-9 items-center justify-center rounded-lg text-success transition hover:bg-success-subtle"
+                                  className="flex h-9 w-9 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
                                 >
                                   <IconCheck className="h-4 w-4" />
                                 </button>
@@ -488,7 +456,7 @@ export default function MenuManagementPage() {
                                     setCategoryDrafts((cur) => ({ ...cur, [item.id]: String(item.categoryId) }));
                                     setEditingItemId(null);
                                   }}
-                                  className="flex h-9 w-9 items-center justify-center rounded-lg text-stone-400 transition hover:bg-stone-100"
+                                  className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
                                 >
                                   <IconX className="h-4 w-4" />
                                 </button>
@@ -498,7 +466,7 @@ export default function MenuManagementPage() {
                                 type="button"
                                 aria-label={`Edit ${item.name}`}
                                 onClick={() => setEditingItemId(item.id)}
-                                className="flex h-9 w-9 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100"
+                                className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
                               >
                                 <IconEdit className="h-4 w-4" />
                               </button>
@@ -507,7 +475,7 @@ export default function MenuManagementPage() {
                               type="button"
                               aria-label={isExpanded ? `Hide modifiers for ${item.name}` : `Show modifiers for ${item.name}`}
                               onClick={() => setExpandedItemId((cur) => (cur === item.id ? null : item.id))}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100"
+                              className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
                             >
                               <IconChevronRight
                                 className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
@@ -517,13 +485,11 @@ export default function MenuManagementPage() {
                         </td>
                       </tr>
                       {isExpanded && (
-                        <tr className="border-b border-stone-100 bg-stone-50">
+                        <tr className="border-b border-border-subtle bg-surface-sunken">
                           <td colSpan={5} className="px-4 py-4">
-                            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-stone-400">
-                              Modifiers for {item.name}
-                            </p>
+                            <p className="label-sm mb-3 text-ink-faint">Modifiers for {item.name}</p>
                             {item.modifiers.length === 0 ? (
-                              <p className="text-sm text-stone-400">No modifiers for this item.</p>
+                              <p className="body-sm text-ink-faint">No modifiers for this item.</p>
                             ) : (
                               <div className="space-y-2">
                                 {item.modifiers.map((modifier) => {
@@ -533,24 +499,24 @@ export default function MenuManagementPage() {
                                   return (
                                     <div
                                       key={modifier.id}
-                                      className="flex flex-wrap items-center gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2.5"
+                                      className="flex flex-wrap items-center gap-3 rounded-md border border-border-subtle bg-surface-raised px-3 py-2.5"
                                     >
                                       {isEditingMod ? (
                                         <>
-                                          <input
+                                          <Input
                                             autoFocus
-                                            className="w-40 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                                            className="w-40"
                                             value={modNameDraft}
                                             onChange={(e) =>
                                               setModifierNameDrafts((cur) => ({ ...cur, [modifier.id]: e.target.value }))
                                             }
                                           />
                                           <div className="flex items-center gap-1.5">
-                                            <span className="text-sm text-stone-400">रु</span>
-                                            <input
+                                            <span className="text-sm text-ink-faint">Rs.</span>
+                                            <Input
                                               type="number"
                                               step="0.01"
-                                              className="w-24 rounded-lg border border-stone-300 px-2.5 py-1.5 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                                              className="w-24"
                                               value={modDeltaDraft}
                                               onChange={(e) =>
                                                 setModifierPriceDeltaDrafts((cur) => ({
@@ -571,7 +537,7 @@ export default function MenuManagementPage() {
                                                 });
                                                 setEditingModifierId(null);
                                               }}
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-success transition hover:bg-success-subtle"
+                                              className="flex h-8 w-8 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
                                             >
                                               <IconCheck className="h-4 w-4" />
                                             </button>
@@ -586,7 +552,7 @@ export default function MenuManagementPage() {
                                                 }));
                                                 setEditingModifierId(null);
                                               }}
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-400 transition hover:bg-stone-100"
+                                              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
                                             >
                                               <IconX className="h-4 w-4" />
                                             </button>
@@ -594,14 +560,14 @@ export default function MenuManagementPage() {
                                         </>
                                       ) : (
                                         <>
-                                          <span className="font-semibold text-stone-800">{modifier.name}</span>
-                                          <span className="text-sm text-stone-500">+रु {modifier.priceDelta}</span>
+                                          <span className="body-md font-semibold text-ink-primary">{modifier.name}</span>
+                                          <span className="body-sm text-ink-secondary">+Rs. {modifier.priceDelta}</span>
                                           <div className="ml-auto flex gap-1.5">
                                             <button
                                               type="button"
                                               aria-label={`Edit modifier ${modifier.name}`}
                                               onClick={() => setEditingModifierId(modifier.id)}
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100"
+                                              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
                                             >
                                               <IconEdit className="h-4 w-4" />
                                             </button>
@@ -609,7 +575,7 @@ export default function MenuManagementPage() {
                                               type="button"
                                               aria-label={`Delete modifier ${modifier.name}`}
                                               onClick={() => handleDeleteModifier(modifier)}
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-danger transition hover:bg-danger-subtle"
+                                              className="flex h-8 w-8 items-center justify-center rounded-md text-status-danger-ink transition hover:bg-status-danger-tint"
                                             >
                                               <IconTrash className="h-4 w-4" />
                                             </button>
@@ -629,7 +595,7 @@ export default function MenuManagementPage() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-sm text-stone-400">
+                    <td colSpan={5} className="body-md py-8 text-center text-ink-faint">
                       {items.length === 0 ? "No menu items yet." : "No items match your search."}
                     </td>
                   </tr>

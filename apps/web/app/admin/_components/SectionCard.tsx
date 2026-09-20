@@ -10,14 +10,14 @@ export function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="card p-5 sm:p-8">
-      <div className="mb-6 flex items-start gap-4 border-b border-stone-100 pb-5">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-subtle text-primary-subtle-fg">
+    <section className="rounded-lg border border-border-subtle bg-surface-raised p-5 shadow-sm sm:p-8">
+      <div className="mb-6 flex items-start gap-4 border-b border-border-subtle pb-5">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand-strong">
           {icon}
         </span>
         <div>
-          <h2 className="text-xl font-bold text-stone-900">{title}</h2>
-          <p className="mt-0.5 text-sm text-stone-500">{description}</p>
+          <h2 className="heading-lg text-ink-primary">{title}</h2>
+          <p className="body-md mt-0.5 text-ink-secondary">{description}</p>
         </div>
       </div>
       {children}

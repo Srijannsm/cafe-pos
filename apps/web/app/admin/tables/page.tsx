@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetchJson } from "../../../lib/api";
 import { useToast } from "../../../components/Toast";
-import { IconTable, IconSearch, IconEdit, IconCheck, IconX } from "../../../components/icons";
+import { IconTable, IconEdit, IconCheck, IconX } from "../../../components/icons";
 import { SectionCard } from "../_components/SectionCard";
+import { Input } from "../../../components/ui/Input";
+import { Button } from "../../../components/ui/Button";
 
 type TableRow = {
   id: number;
@@ -12,9 +14,6 @@ type TableRow = {
   capacity: number;
   status: "free" | "occupied" | "reserved";
 };
-
-const inputClass =
-  "w-full rounded-xl border border-stone-300 px-3 py-2 text-sm text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle";
 
 export default function TablesManagementPage() {
   const { showToast, toastHost } = useToast();
@@ -84,59 +83,48 @@ export default function TablesManagementPage() {
     <div className="space-y-8">
       {toastHost}
       <div>
-        <h1 className="text-3xl font-bold text-stone-900">Tables</h1>
-        <p className="mt-1 text-sm text-stone-500">Add tables and edit numbers or seating.</p>
+        <h1 className="display-md text-ink-primary">Tables</h1>
+        <p className="body-md mt-1 text-ink-secondary">Add tables and edit numbers or seating.</p>
       </div>
 
       <SectionCard icon={<IconTable />} title="Add table" description="Table status follows the order lifecycle and can't be set here.">
         <form onSubmit={handleAddTable} className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-stone-400">Table number</label>
-            <input
-              className={`${inputClass} w-40`}
-              value={newTableNumber}
-              onChange={(e) => setNewTableNumber(e.target.value)}
-              required
-            />
+            <label className="label-sm text-ink-faint">Table number</label>
+            <Input className="w-40" value={newTableNumber} onChange={(e) => setNewTableNumber(e.target.value)} required />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold uppercase tracking-wide text-stone-400">Capacity</label>
-            <input
-              className={`${inputClass} w-28`}
+            <label className="label-sm text-ink-faint">Capacity</label>
+            <Input
+              className="w-28"
               type="number"
               value={newTableCapacity}
               onChange={(e) => setNewTableCapacity(e.target.value)}
               required
             />
           </div>
-          <button type="submit" disabled={savingTable} className="btn btn-primary">
+          <Button type="submit" disabled={savingTable}>
             Add table
-          </button>
+          </Button>
         </form>
       </SectionCard>
 
       <SectionCard icon={<IconTable />} title="Existing tables" description="Search and edit table numbers or seating.">
-        <div className="relative mb-5 sm:max-w-xs">
-          <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
-          <input
-            className="w-full rounded-xl border border-stone-300 py-2 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
-            placeholder="Search tables…"
-            value={tableSearch}
-            onChange={(e) => setTableSearch(e.target.value)}
-          />
+        <div className="mb-5 sm:max-w-xs">
+          <Input pill placeholder="Search tables…" value={tableSearch} onChange={(e) => setTableSearch(e.target.value)} />
         </div>
 
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-xl bg-stone-200" />
+              <div key={i} className="h-12 animate-pulse rounded-md bg-surface-sunken" />
             ))}
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left">
               <thead>
-                <tr className="border-b border-stone-200 text-xs font-bold uppercase tracking-wide text-stone-400">
+                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
                   <th className="py-3 pr-4">Table number</th>
                   <th className="py-3 pr-4">Capacity</th>
                   <th className="py-3 pr-0 text-right">Actions</th>
@@ -150,12 +138,12 @@ export default function TablesManagementPage() {
                     capacity: String(table.capacity),
                   };
                   return (
-                    <tr key={table.id} className="border-b border-stone-100 last:border-0">
+                    <tr key={table.id} className="border-b border-border-subtle last:border-0">
                       <td className="py-4 pr-4">
                         {isEditing ? (
-                          <input
+                          <Input
                             autoFocus
-                            className="w-36 rounded-lg border border-stone-300 px-2.5 py-2 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                            className="w-36"
                             value={draft.tableNumber}
                             onChange={(e) =>
                               setTableDrafts((cur) => ({
@@ -165,14 +153,14 @@ export default function TablesManagementPage() {
                             }
                           />
                         ) : (
-                          <span className="font-medium text-stone-900">{table.tableNumber}</span>
+                          <span className="body-md font-medium text-ink-primary">{table.tableNumber}</span>
                         )}
                       </td>
                       <td className="py-4 pr-4">
                         {isEditing ? (
-                          <input
+                          <Input
                             type="number"
-                            className="w-24 rounded-lg border border-stone-300 px-2.5 py-2 text-sm font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-subtle"
+                            className="w-24"
                             value={draft.capacity}
                             onChange={(e) =>
                               setTableDrafts((cur) => ({
@@ -182,7 +170,7 @@ export default function TablesManagementPage() {
                             }
                           />
                         ) : (
-                          <span className="text-stone-700">{table.capacity}</span>
+                          <span className="body-md text-ink-secondary">{table.capacity}</span>
                         )}
                       </td>
                       <td className="py-4 pr-0 text-right">
@@ -198,7 +186,7 @@ export default function TablesManagementPage() {
                                 });
                                 setEditingTableId(null);
                               }}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg text-success transition hover:bg-success-subtle"
+                              className="flex h-9 w-9 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
                             >
                               <IconCheck className="h-4 w-4" />
                             </button>
@@ -212,7 +200,7 @@ export default function TablesManagementPage() {
                                 }));
                                 setEditingTableId(null);
                               }}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg text-stone-400 transition hover:bg-stone-100"
+                              className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
                             >
                               <IconX className="h-4 w-4" />
                             </button>
@@ -222,7 +210,7 @@ export default function TablesManagementPage() {
                             type="button"
                             aria-label={`Edit table ${table.tableNumber}`}
                             onClick={() => setEditingTableId(table.id)}
-                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100"
+                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
                           >
                             <IconEdit className="h-4 w-4" />
                           </button>
@@ -233,7 +221,7 @@ export default function TablesManagementPage() {
                 })}
                 {filteredTables.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="py-8 text-center text-sm text-stone-400">
+                    <td colSpan={3} className="body-md py-8 text-center text-ink-faint">
                       {tables.length === 0 ? "No tables yet." : "No tables match your search."}
                     </td>
                   </tr>
