@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetchJson, getCurrentUser } from "../lib/api";
 import { useRequireAuth } from "../lib/useRequireAuth";
 import { NavBar } from "../components/NavBar";
 import { IconAlert, IconInbox } from "../components/icons";
+import { Input } from "../components/ui/Input";
+import { TableTile } from "../components/ui/TableTile";
+import { StatusBadge } from "../components/ui/StatusBadge";
 
 type Table = {
   id: number;
@@ -16,11 +19,11 @@ type Table = {
   activeOrderStatus: string | null;
 };
 
-const ORDER_STAGE_BADGE: Record<string, string> = {
-  pending: "bg-stone-200 text-stone-700",
-  preparing: "bg-warning-subtle text-warning-subtle-fg",
-  served: "bg-info-subtle text-info-subtle-fg",
-  billed: "bg-plum-subtle text-plum-subtle-fg",
+const ORDER_STAGE_TONE: Record<string, "neutral" | "warning" | "info" | "success"> = {
+  pending: "neutral",
+  preparing: "warning",
+  served: "info",
+  billed: "success",
 };
 
 const ORDER_STAGE_LABEL: Record<string, string> = {
@@ -30,12 +33,17 @@ const ORDER_STAGE_LABEL: Record<string, string> = {
   billed: "Ready for payment",
 };
 
+const FILTERS = ["All", "Free", "Occupied", "Reserved"] as const;
+type Filter = (typeof FILTERS)[number];
+
 export default function Home() {
   const router = useRouter();
   const ready = useRequireAuth();
   const [tables, setTables] = useState<Table[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("All");
 
   useEffect(() => {
     if (!ready) return;
@@ -81,24 +89,46 @@ export default function Home() {
     }
   }
 
+  const filteredTables = useMemo(() => {
+    return tables.filter((table) => {
+      if (filter !== "All" && table.status !== filter.toLowerCase()) return false;
+      if (search && !table.tableNumber.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [tables, filter, search]);
+
   return (
     <main className="min-h-screen">
       <NavBar />
       <div className="p-4 sm:p-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold text-stone-900">Tables</h1>
-          <div className="flex items-center gap-4 text-xs font-semibold text-stone-500">
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-success" /> Free
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-primary" /> Occupied
-            </span>
+          <h1 className="display-md text-ink-primary">Tables</h1>
+        </div>
+
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <div className="w-full max-w-xs">
+            <Input pill placeholder="Search tables…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {FILTERS.map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(f)}
+                className={`rounded-pill px-4 py-2 font-body text-sm font-semibold transition ${
+                  filter === f
+                    ? "bg-brand text-on-brand"
+                    : "border border-border-subtle bg-surface-raised text-ink-secondary hover:bg-surface-sunken"
+                }`}
+              >
+                {f}
+              </button>
+            ))}
           </div>
         </div>
 
         {message && (
-          <div className="animate-card-in mb-4 flex items-center gap-2 rounded-xl bg-danger-subtle px-4 py-3 text-sm font-medium text-danger-subtle-fg">
+          <div className="animate-card-in mb-4 flex items-center gap-2 rounded-md bg-status-danger-tint px-4 py-3 body-md text-status-danger-ink">
             <IconAlert className="h-5 w-5 shrink-0" />
             {message}
           </div>
@@ -107,61 +137,32 @@ export default function Home() {
         {!ready || loading ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-36 animate-pulse rounded-2xl bg-stone-200" />
+              <div key={i} className="aspect-square animate-pulse rounded-xl bg-surface-sunken" />
             ))}
           </div>
-        ) : tables.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-stone-300 bg-white py-16 text-center">
-            <IconInbox className="h-10 w-10 text-stone-300" />
-            <p className="text-stone-500">No tables configured yet.</p>
+        ) : filteredTables.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border-strong bg-surface-raised py-16 text-center">
+            <IconInbox className="h-10 w-10 text-ink-faint" />
+            <p className="body-md text-ink-secondary">
+              {tables.length === 0 ? "No tables configured yet." : "No tables match your search."}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {tables.map((table) => {
-              const isFree = table.status === "free";
+            {filteredTables.map((table) => {
               const stage = table.activeOrderStatus ?? undefined;
-
               return (
-                <button
-                  key={table.id}
-                  onClick={() => handleTableClick(table)}
-                  className={`flex min-h-36 flex-col justify-between rounded-2xl border-2 p-4 text-left shadow-sm transition active:scale-[0.98] ${
-                    isFree
-                      ? "border-emerald-200 bg-success-subtle hover:border-emerald-300"
-                      : table.status === "occupied"
-                        ? "border-orange-200 bg-primary-subtle hover:border-orange-300"
-                        : "border-stone-200 bg-stone-100"
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="text-xl font-bold text-stone-900">{table.tableNumber}</div>
-                    <span
-                      className={`h-3 w-3 shrink-0 rounded-full ${
-                        isFree ? "bg-success" : table.status === "occupied" ? "bg-primary" : "bg-stone-400"
-                      }`}
-                    />
-                  </div>
-                  <div className="text-xs text-stone-500">Seats {table.capacity}</div>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span
-                      className={`badge ${
-                        isFree
-                          ? "bg-success-subtle text-success-subtle-fg"
-                          : table.status === "occupied"
-                            ? "bg-primary-subtle text-primary-subtle-fg"
-                            : "bg-stone-200 text-stone-600"
-                      }`}
-                    >
-                      {table.status}
-                    </span>
-                    {stage && ORDER_STAGE_BADGE[stage] && (
-                      <span className={`badge normal-case ${ORDER_STAGE_BADGE[stage]}`}>
-                        {ORDER_STAGE_LABEL[stage]}
-                      </span>
-                    )}
-                  </div>
-                </button>
+                <div key={table.id} className="flex flex-col gap-2">
+                  <TableTile
+                    tableNumber={table.tableNumber}
+                    seats={table.capacity}
+                    status={table.status}
+                    onClick={() => handleTableClick(table)}
+                  />
+                  {stage && ORDER_STAGE_LABEL[stage] && (
+                    <StatusBadge tone={ORDER_STAGE_TONE[stage] ?? "neutral"}>{ORDER_STAGE_LABEL[stage]}</StatusBadge>
+                  )}
+                </div>
               );
             })}
           </div>
