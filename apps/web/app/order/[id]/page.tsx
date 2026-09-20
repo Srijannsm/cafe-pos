@@ -7,6 +7,10 @@ import { useRequireAuth } from "../../../lib/useRequireAuth";
 import { NavBar } from "../../../components/NavBar";
 import { useToast } from "../../../components/Toast";
 import { IconChevronRight, IconMinus, IconPlus, IconAlert } from "../../../components/icons";
+import { Button } from "../../../components/ui/Button";
+import { Card } from "../../../components/ui/Card";
+import { PriceDisplay } from "../../../components/ui/PriceDisplay";
+import { StatusBadge } from "../../../components/ui/StatusBadge";
 
 type Modifier = {
   id: number;
@@ -37,13 +41,13 @@ type Order = {
   orderItems: OrderItem[];
 };
 
-const STATUS_BADGE: Record<Order["status"], string> = {
-  pending: "bg-stone-200 text-stone-700",
-  preparing: "bg-warning-subtle text-warning-subtle-fg",
-  served: "bg-info-subtle text-info-subtle-fg",
-  billed: "bg-plum-subtle text-plum-subtle-fg",
-  paid: "bg-success-subtle text-success-subtle-fg",
-  cancelled: "bg-stone-200 text-stone-500",
+const STATUS_TONE: Record<Order["status"], "neutral" | "warning" | "info" | "success" | "danger"> = {
+  pending: "neutral",
+  preparing: "warning",
+  served: "info",
+  billed: "success",
+  paid: "success",
+  cancelled: "danger",
 };
 
 function lineTotal(item: OrderItem): number {
@@ -72,6 +76,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [order, setOrder] = useState<Order | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [selectedModifierIds, setSelectedModifierIds] = useState<number[]>([]);
@@ -170,10 +175,10 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
         <div className="grid gap-6 p-4 sm:grid-cols-2 sm:p-6">
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-14 animate-pulse rounded-xl bg-stone-200" />
+              <div key={i} className="h-14 animate-pulse rounded-md bg-surface-sunken" />
             ))}
           </div>
-          <div className="h-64 animate-pulse rounded-2xl bg-stone-200" />
+          <div className="h-64 animate-pulse rounded-lg bg-surface-sunken" />
         </div>
       </main>
     );
@@ -181,6 +186,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
 
   const runningTotal = order.orderItems.reduce((sum, item) => sum + lineTotal(item), 0);
   const categories = groupByCategory(menu);
+  const currentCategory = activeCategory ?? categories[0]?.[0];
+  const itemsToShow = categories.find(([name]) => name === currentCategory)?.[1] ?? [];
   const isFinal = order.status === "cancelled" || order.status === "paid";
 
   return (
@@ -189,40 +196,61 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       {toastHost}
       <div className={isFinal ? "p-4 sm:p-6" : "grid gap-6 p-4 sm:grid-cols-2 sm:p-6"}>
         {!isFinal && (
-        <section>
-          <h2 className="mb-4 text-lg font-bold text-stone-900">Menu</h2>
+          <section>
+            <h2 className="heading-lg mb-4 text-ink-primary">Menu</h2>
 
-          {menuLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-14 animate-pulse rounded-xl bg-stone-200" />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {categories.map(([categoryName, items]) => (
-                <div key={categoryName}>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-stone-400">{categoryName}</h3>
-                  <div className="space-y-2">
-                    {items.map((item) => (
-                      <div key={item.id} className="card overflow-hidden">
+            {menuLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-14 animate-pulse rounded-md bg-surface-sunken" />
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {categories.map(([categoryName]) => (
+                    <button
+                      key={categoryName}
+                      type="button"
+                      onClick={() => setActiveCategory(categoryName)}
+                      className={`rounded-pill px-4 py-2 font-body text-sm font-semibold transition ${
+                        currentCategory === categoryName
+                          ? "bg-brand text-on-brand"
+                          : "border border-border-subtle bg-surface-raised text-ink-secondary hover:bg-surface-sunken"
+                      }`}
+                    >
+                      {categoryName}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 items-start gap-3">
+                  {itemsToShow.map((item) => {
+                    const isSelected = selectedItemId === item.id;
+                    const selectedPrice =
+                      (Number(item.price) +
+                        item.modifiers
+                          .filter((m) => selectedModifierIds.includes(m.id))
+                          .reduce((s, m) => s + Number(m.priceDelta), 0)) *
+                      quantity;
+
+                    return (
+                      <Card key={item.id} className={isSelected ? "col-span-2" : undefined}>
                         <button
                           onClick={() => selectItem(item)}
-                          className="flex w-full items-center justify-between gap-3 p-4 text-left transition hover:bg-stone-50 active:bg-stone-100"
+                          className="flex w-full items-center justify-between gap-2 text-left"
                         >
-                          <span className="font-medium text-stone-900">{item.name}</span>
-                          <span className="flex items-center gap-2 text-sm text-stone-500">
-                            रु {item.price}
+                          <span className="body-md font-semibold text-ink-primary">{item.name}</span>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            <PriceDisplay amount={item.price} />
                             <IconChevronRight
-                              className={`h-4 w-4 text-stone-300 transition-transform ${
-                                selectedItemId === item.id ? "rotate-90" : ""
-                              }`}
+                              className={`h-4 w-4 text-ink-faint transition-transform ${isSelected ? "rotate-90" : ""}`}
                             />
                           </span>
                         </button>
 
-                        {selectedItemId === item.id && (
-                          <div className="animate-card-in flex flex-col gap-4 border-t border-stone-200 bg-stone-50 p-4">
+                        {isSelected && (
+                          <div className="animate-card-in mt-4 flex flex-col gap-4 border-t border-border-subtle pt-4">
                             {item.modifiers.length > 0 && (
                               <div className="flex flex-wrap gap-2">
                                 {item.modifiers.map((modifier) => {
@@ -232,13 +260,13 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                                       key={modifier.id}
                                       type="button"
                                       onClick={() => toggleModifier(modifier.id)}
-                                      className={`rounded-full border-2 px-3 py-1.5 text-xs font-semibold transition ${
+                                      className={`rounded-pill border-2 px-3 py-1.5 body-sm font-semibold transition ${
                                         active
-                                          ? "border-primary bg-primary-subtle text-primary-subtle-fg"
-                                          : "border-stone-200 bg-white text-stone-600 hover:border-stone-300"
+                                          ? "border-brand bg-brand-tint text-brand-strong"
+                                          : "border-border-subtle bg-surface-raised text-ink-secondary hover:border-border-strong"
                                       }`}
                                     >
-                                      {modifier.name} +रु {modifier.priceDelta}
+                                      {modifier.name} +Rs. {modifier.priceDelta}
                                     </button>
                                   );
                                 })}
@@ -250,71 +278,63 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                                 <button
                                   type="button"
                                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                                  className="flex h-10 w-10 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 active:scale-95"
+                                  className="flex h-10 w-10 items-center justify-center rounded-pill border border-border-strong bg-surface-raised text-ink-secondary active:scale-95"
                                   aria-label="Decrease quantity"
                                 >
                                   <IconMinus />
                                 </button>
-                                <span className="w-6 text-center text-base font-bold text-stone-900">{quantity}</span>
+                                <span className="heading-sm w-6 text-center text-ink-primary">{quantity}</span>
                                 <button
                                   type="button"
                                   onClick={() => setQuantity((q) => q + 1)}
-                                  className="flex h-10 w-10 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 active:scale-95"
+                                  className="flex h-10 w-10 items-center justify-center rounded-pill border border-border-strong bg-surface-raised text-ink-secondary active:scale-95"
                                   aria-label="Increase quantity"
                                 >
                                   <IconPlus />
                                 </button>
                               </div>
-                              <button onClick={() => handleAddItem(item)} disabled={adding} className="btn btn-primary">
-                                Add · रु{" "}
-                                {(
-                                  (Number(item.price) +
-                                    item.modifiers
-                                      .filter((m) => selectedModifierIds.includes(m.id))
-                                      .reduce((s, m) => s + Number(m.priceDelta), 0)) *
-                                  quantity
-                                ).toFixed(2)}
-                              </button>
+                              <Button onClick={() => handleAddItem(item)} disabled={adding}>
+                                Add · <PriceDisplay amount={selectedPrice} />
+                              </Button>
                             </div>
                           </div>
                         )}
-                      </div>
-                    ))}
-                  </div>
+                      </Card>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
+              </>
+            )}
+          </section>
         )}
 
         <section className={isFinal ? "mx-auto w-full max-w-md" : undefined}>
-          <div className="card sticky top-20 p-4 sm:p-5">
+          <Card className="sticky top-20">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-stone-900">Order #{order.id}</h2>
-                <span className={`badge mt-1 ${STATUS_BADGE[order.status]}`}>{order.status}</span>
+                <h2 className="heading-lg text-ink-primary">Order #{order.id}</h2>
+                <div className="mt-1">
+                  <StatusBadge tone={STATUS_TONE[order.status]}>{order.status}</StatusBadge>
+                </div>
               </div>
             </div>
 
             <div className="mb-4 space-y-2">
               {order.orderItems.length === 0 && (
-                <p className="rounded-xl bg-stone-50 p-4 text-center text-sm text-stone-400">
+                <p className="body-md rounded-md bg-surface-sunken p-4 text-center text-ink-faint">
                   No items yet — tap the menu to add some.
                 </p>
               )}
               {order.orderItems.map((item) => (
-                <div key={item.id} className="rounded-xl bg-stone-50 p-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-stone-800">
+                <div key={item.id} className="rounded-md bg-surface-sunken p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="body-md font-medium text-ink-primary">
                       {item.quantity}× {item.menuItem.name}
                     </span>
-                    <span className="tabular-nums font-semibold text-stone-900">
-                      रु {lineTotal(item).toFixed(2)}
-                    </span>
+                    <PriceDisplay amount={lineTotal(item)} />
                   </div>
                   {item.orderItemModifiers.length > 0 && (
-                    <div className="mt-1 text-xs text-stone-500">
+                    <div className="body-sm mt-1 text-ink-secondary">
                       {item.orderItemModifiers.map((oim) => oim.modifier.name).join(", ")}
                     </div>
                   )}
@@ -323,59 +343,67 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             </div>
 
             {order.orderItems.length > 0 && (
-              <div className="mb-4 flex items-center justify-between border-t border-stone-200 pt-3">
-                <span className="text-sm font-semibold text-stone-500">Running total</span>
-                <span className="text-lg font-bold text-stone-900">रु {runningTotal.toFixed(2)}</span>
+              <div className="mb-4 flex items-center justify-between border-t border-border-subtle pt-3">
+                <span className="label-md text-ink-secondary">Running total</span>
+                <PriceDisplay amount={runningTotal} size="lg" />
               </div>
             )}
 
             {order.status === "cancelled" || order.status === "paid" ? (
-              <p className="rounded-xl bg-stone-50 p-4 text-center text-sm font-medium text-stone-500">
-                {order.status === "paid" ? "This order has been paid. Nothing more to do here." : "This order was cancelled."}
+              <p className="body-md rounded-md bg-surface-sunken p-4 text-center font-medium text-ink-secondary">
+                {order.status === "paid"
+                  ? "This order has been paid. Nothing more to do here."
+                  : "This order was cancelled."}
               </p>
             ) : (
               <div className="flex flex-col gap-2">
-                <button
+                <Button
                   onClick={handleSendToKitchen}
                   disabled={order.status !== "pending"}
-                  className="btn btn-primary w-full"
+                  variant="primary"
+                  size="large"
+                  className="w-full"
                 >
                   Send to kitchen
-                </button>
-                <button onClick={handleServe} disabled={order.status !== "preparing"} className="btn btn-secondary w-full">
+                </Button>
+                <Button onClick={handleServe} disabled={order.status !== "preparing"} variant="secondary" className="w-full">
                   Serve
-                </button>
+                </Button>
 
                 {order.status === "pending" &&
                   (confirmingCancel ? (
-                    <div className="animate-card-in rounded-xl border border-danger-subtle bg-danger-subtle p-3">
-                      <p className="mb-3 text-sm font-medium text-danger-subtle-fg">
+                    <div className="animate-card-in rounded-md bg-status-danger-tint p-3">
+                      <p className="body-md mb-3 font-medium text-status-danger-ink">
                         Cancel this order? This can&apos;t be undone.
                       </p>
                       <div className="flex gap-2">
-                        <button onClick={handleCancel} className="btn btn-danger flex-1">
+                        <Button onClick={handleCancel} variant="danger" className="flex-1">
                           Yes, cancel
-                        </button>
-                        <button onClick={() => setConfirmingCancel(false)} className="btn btn-secondary flex-1">
+                        </Button>
+                        <Button onClick={() => setConfirmingCancel(false)} variant="secondary" className="flex-1">
                           Keep order
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setConfirmingCancel(true)} className="btn btn-danger-outline mt-2 w-full">
+                    <Button
+                      onClick={() => setConfirmingCancel(true)}
+                      variant="secondary"
+                      className="mt-2 w-full text-status-danger-ink"
+                    >
                       Cancel order
-                    </button>
+                    </Button>
                   ))}
               </div>
             )}
 
             {error && (
-              <div className="mt-4 flex items-center gap-2 rounded-xl bg-danger-subtle px-3 py-2 text-sm font-medium text-danger-subtle-fg">
+              <div className="mt-4 flex items-center gap-2 rounded-md bg-status-danger-tint px-3 py-2 body-md text-status-danger-ink">
                 <IconAlert className="h-4 w-4 shrink-0" />
                 {error}
               </div>
             )}
-          </div>
+          </Card>
         </section>
       </div>
     </main>
