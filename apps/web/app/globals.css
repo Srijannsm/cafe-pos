@@ -81,29 +81,6 @@
 }
 
 @theme {
-  /* --- deprecated terracotta tokens ---
-     Still consumed by pages/components not yet migrated to the new
-     design system (order, kitchen, billing, admin, Toast, NumericKeypad,
-     login). Remove this whole block once every consumer is migrated. */
-  --color-primary: #c2410c;
-  --color-primary-dark: #9a3412;
-  --color-primary-subtle: #ffedd5;
-  --color-primary-subtle-fg: #9a3412;
-  --color-danger: #dc2626;
-  --color-danger-dark: #b91c1c;
-  --color-danger-subtle: #fee2e2;
-  --color-danger-subtle-fg: #991b1b;
-  --color-success: #059669;
-  --color-success-dark: #047857;
-  --color-success-subtle: #d1fae5;
-  --color-success-subtle-fg: #065f46;
-  --color-warning-subtle: #fef3c7;
-  --color-warning-subtle-fg: #92400e;
-  --color-info-subtle: #dbeafe;
-  --color-info-subtle-fg: #1e40af;
-  --color-plum-subtle: #ede9fe;
-  --color-plum-subtle-fg: #5b21b6;
-
   --animate-toast-in: toast-in 200ms ease-out;
   --animate-card-in: card-in 250ms ease-out;
   --animate-pop: pop 200ms ease-out;
@@ -226,33 +203,6 @@
 }
 
 @layer components {
-  /* --- deprecated shared classes ---
-     Kept for pages not yet migrated to the components/ui/ primitives.
-     Remove once every consumer below has migrated. */
-  .btn {
-    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition active:scale-[0.97] disabled:cursor-not-allowed disabled:active:scale-100;
-  }
-  .btn-primary {
-    @apply bg-primary text-white shadow-sm hover:bg-primary-dark disabled:bg-stone-300 disabled:text-stone-500 disabled:shadow-none;
-  }
-  .btn-secondary {
-    @apply border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 disabled:border-stone-200 disabled:text-stone-400;
-  }
-  .btn-danger-outline {
-    @apply border-2 border-danger bg-white text-danger hover:bg-danger-subtle disabled:border-stone-200 disabled:text-stone-400;
-  }
-  .btn-danger {
-    @apply bg-danger text-white shadow-sm hover:bg-danger-dark;
-  }
-
-  .badge {
-    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide;
-  }
-
-  .card {
-    @apply rounded-2xl border border-stone-200 bg-white shadow-sm;
-  }
-
   /* --- type scale --- */
   .display-lg {
     font-family: var(--font-display);

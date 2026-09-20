@@ -29,7 +29,7 @@ export function NumericKeypad({ value, onChange, maxLength, shake }: NumericKeyp
           <span
             key={i}
             className={`h-4 w-4 rounded-full border-2 transition-colors ${
-              i < value.length ? "border-primary bg-primary" : "border-stone-300 bg-transparent"
+              i < value.length ? "border-brand bg-brand" : "border-border-strong bg-transparent"
             }`}
           />
         ))}
@@ -45,9 +45,9 @@ export function NumericKeypad({ value, onChange, maxLength, shake }: NumericKeyp
               type="button"
               onClick={() => press(key)}
               aria-label={key === "back" ? "Delete last digit" : `Digit ${key}`}
-              className="flex h-16 w-16 items-center justify-center rounded-2xl border border-stone-200 bg-white text-xl font-semibold text-stone-800 shadow-sm transition hover:bg-stone-50 active:scale-95 sm:h-20 sm:w-20"
+              className="flex h-16 w-16 items-center justify-center rounded-xl border border-border-subtle bg-surface-raised text-xl font-semibold text-ink-primary shadow-sm transition hover:bg-surface-sunken active:scale-95 sm:h-20 sm:w-20"
             >
-              {key === "back" ? <IconBackspace className="h-6 w-6 text-stone-500" /> : key}
+              {key === "back" ? <IconBackspace className="h-6 w-6 text-ink-secondary" /> : key}
             </button>
           ),
         )}

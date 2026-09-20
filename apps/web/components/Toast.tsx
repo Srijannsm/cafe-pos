@@ -23,8 +23,8 @@ export function useToast() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`animate-toast-in pointer-events-auto flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-lg ${
-            t.tone === "success" ? "bg-stone-900 text-white" : "bg-danger text-white"
+          className={`animate-toast-in pointer-events-auto flex items-center gap-2 rounded-md px-4 py-3 text-sm font-semibold shadow-lg ${
+            t.tone === "success" ? "bg-ink-primary text-surface-canvas" : "bg-status-danger text-on-brand"
           }`}
         >
           {t.tone === "success" ? <IconCheck className="h-4 w-4 shrink-0" /> : <IconAlert className="h-4 w-4 shrink-0" />}

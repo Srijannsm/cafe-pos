@@ -72,19 +72,19 @@ export default function LoginPage() {
   const selectedPerson = staff.find((p) => p.id === selectedUserId) ?? null;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-stone-50 to-stone-100 p-6">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-lg font-bold text-white">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand">
           ☕
         </div>
-        <h1 className="text-2xl font-bold text-stone-900">Who&apos;s working today?</h1>
-        <p className="mt-1 text-sm text-stone-500">Tap your name, then enter your PIN</p>
+        <h1 className="heading-lg text-ink-primary">Who&apos;s working today?</h1>
+        <p className="body-md mt-1 text-ink-secondary">Tap your name, then enter your PIN</p>
       </div>
 
       {loadingStaff ? (
         <div className="flex flex-wrap justify-center gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 w-28 animate-pulse rounded-2xl bg-stone-200" />
+            <div key={i} className="h-28 w-28 animate-pulse rounded-xl bg-surface-sunken" />
           ))}
         </div>
       ) : (
@@ -93,10 +93,10 @@ export default function LoginPage() {
             <button
               key={person.id}
               onClick={() => selectPerson(person.id)}
-              className={`flex w-28 flex-col items-center gap-2 rounded-2xl border-2 p-4 text-center transition active:scale-95 ${
+              className={`flex w-28 flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition active:scale-95 ${
                 selectedUserId === person.id
-                  ? "border-primary bg-primary-subtle shadow-sm"
-                  : "border-transparent bg-white shadow-sm hover:border-stone-200"
+                  ? "border-brand bg-brand-tint shadow-sm"
+                  : "border-transparent bg-surface-raised shadow-sm hover:border-border-subtle"
               }`}
             >
               <span
@@ -104,17 +104,17 @@ export default function LoginPage() {
               >
                 {person.name.charAt(0).toUpperCase()}
               </span>
-              <span className="text-sm font-semibold text-stone-900">{person.name}</span>
-              <span className="text-xs uppercase tracking-wide text-stone-500">{person.role}</span>
+              <span className="body-md font-semibold text-ink-primary">{person.name}</span>
+              <span className="label-sm text-ink-secondary">{person.role}</span>
             </button>
           ))}
         </div>
       )}
 
       {selectedPerson && (
-        <div className="animate-card-in flex flex-col items-center gap-4 rounded-2xl bg-white p-6 shadow-md">
-          <p className="text-sm text-stone-500">
-            Enter PIN for <span className="font-semibold text-stone-800">{selectedPerson.name}</span>
+        <div className="animate-card-in flex flex-col items-center gap-4 rounded-xl bg-surface-raised p-6 shadow-md">
+          <p className="body-md text-ink-secondary">
+            Enter PIN for <span className="font-semibold text-ink-primary">{selectedPerson.name}</span>
           </p>
 
           <NumericKeypad
@@ -130,7 +130,9 @@ export default function LoginPage() {
           />
 
           {error && (
-            <p className="rounded-lg bg-danger-subtle px-3 py-2 text-sm font-medium text-danger-subtle-fg">{error}</p>
+            <p className="body-md rounded-md bg-status-danger-tint px-3 py-2 font-medium text-status-danger-ink">
+              {error}
+            </p>
           )}
         </div>
       )}
