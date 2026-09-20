@@ -23,15 +23,15 @@ export function NavBar() {
   const linkClass = (href: string) =>
     `rounded-full px-4 py-2.5 text-sm font-semibold transition ${
       pathname === href
-        ? "bg-primary-subtle text-primary-subtle-fg"
+        ? "bg-brand-tint text-brand-strong"
         : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
     }`;
 
   return (
-    <nav className="sticky top-0 z-40 flex items-center justify-between gap-4 border-b border-stone-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
+    <nav className="sticky top-0 z-40 flex items-center justify-between gap-4 border-b border-border-subtle bg-surface-raised/95 px-4 py-3 backdrop-blur sm:px-6">
       <div className="flex items-center gap-4">
-        <span className="hidden items-center gap-1.5 text-sm font-bold text-stone-900 sm:flex">
-          <span className="h-2 w-2 rounded-full bg-primary" />
+        <span className="hidden items-center gap-1.5 font-display text-sm font-bold text-ink-primary sm:flex">
+          <span className="h-2 w-2 rounded-full bg-brand" />
           Cafe POS
         </span>
         <div className="flex gap-1.5">

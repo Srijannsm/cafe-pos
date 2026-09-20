@@ -1,25 +1,102 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Semantic design tokens — light theme is the default (:root),
+   dark theme applies via data-theme="dark" (Kitchen Display only).
+   Kept as plain custom properties (not under @theme's --color-*
+   namespace) so the values can swap per-theme at runtime; the
+   @theme block below aliases them so Tailwind still generates
+   utility classes like bg-surface-canvas / text-ink-primary.
+   ============================================================ */
+:root {
+  --surface-canvas: #faf8f4;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1eee7;
+  --surface-overlay: #ffffff;
+  --border-subtle: #e7e2d8;
+  --border-strong: #d2cbb9;
+
+  --ink-primary: #2a2620;
+  --ink-secondary: #6e6656;
+  --ink-faint: #a69c87;
+  --on-brand: #ffffff;
+
+  --brand: #7c8770;
+  --brand-strong: #616b57;
+  --brand-tint: #edf0e7;
+  --focus-ring: #3f6e90;
+
+  --status-info: #3f6e90;
+  --status-info-tint: #e6eef3;
+  --status-info-ink: #2a4e68;
+  --status-warning: #a8762f;
+  --status-warning-tint: #f5ecda;
+  --status-warning-ink: #7a5620;
+  --status-success: #45824e;
+  --status-success-tint: #e5f0e5;
+  --status-success-ink: #2f5e36;
+  --status-danger: #a8493d;
+  --status-danger-tint: #f4e5e2;
+  --status-danger-ink: #7c3327;
+
+  --shadow-elevation-sm: 0 1px 2px rgba(42, 38, 32, 0.06);
+  --shadow-elevation-md: 0 4px 14px rgba(42, 38, 32, 0.1);
+  --shadow-elevation-lg: 0 16px 36px rgba(42, 38, 32, 0.16);
+}
+
+[data-theme="dark"] {
+  --surface-canvas: #15171a;
+  --surface-raised: #1d2023;
+  --surface-sunken: #0f1113;
+  --surface-overlay: #24282c;
+  --border-subtle: #2b2f33;
+  --border-strong: #3c4147;
+
+  --ink-primary: #edeae2;
+  --ink-secondary: #a3a79c;
+  --ink-faint: #6b7074;
+  --on-brand: #16211a;
+
+  --brand: #9cab8f;
+  --brand-strong: #b4c2a8;
+  --brand-tint: #202822;
+  --focus-ring: #8ab4d4;
+
+  --status-info: #8ab4d4;
+  --status-info-tint: #1b2630;
+  --status-info-ink: #c7deec;
+  --status-warning: #d9a85e;
+  --status-warning-tint: #2b2216;
+  --status-warning-ink: #eac689;
+  --status-success: #72b87d;
+  --status-success-tint: #1a2a1c;
+  --status-success-ink: #a8dbb0;
+  --status-danger: #d97565;
+  --status-danger-tint: #2d1c19;
+  --status-danger-ink: #f0aa9c;
+
+  --shadow-elevation-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-elevation-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --shadow-elevation-lg: 0 16px 36px rgba(0, 0, 0, 0.55);
+}
+
 @theme {
-  /* Primary action color — warm terracotta, reads as "cafe" rather than generic SaaS blue. */
+  /* --- deprecated terracotta tokens ---
+     Still consumed by pages/components not yet migrated to the new
+     design system (order, kitchen, billing, admin, Toast, NumericKeypad,
+     login). Remove this whole block once every consumer is migrated. */
   --color-primary: #c2410c;
   --color-primary-dark: #9a3412;
   --color-primary-subtle: #ffedd5;
   --color-primary-subtle-fg: #9a3412;
-
-  /* Destructive color, used only for cancel/danger actions. */
   --color-danger: #dc2626;
   --color-danger-dark: #b91c1c;
   --color-danger-subtle: #fee2e2;
   --color-danger-subtle-fg: #991b1b;
-
-  /* Success / "free" / "paid" semantics. */
   --color-success: #059669;
   --color-success-dark: #047857;
   --color-success-subtle: #d1fae5;
   --color-success-subtle-fg: #065f46;
-
-  /* Informational status tones (non-interactive badges only). */
   --color-warning-subtle: #fef3c7;
   --color-warning-subtle-fg: #92400e;
   --color-info-subtle: #dbeafe;
@@ -31,6 +108,54 @@
   --animate-card-in: card-in 250ms ease-out;
   --animate-pop: pop 200ms ease-out;
   --animate-shake: shake 320ms ease-in-out;
+
+  /* --- new design system tokens --- */
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --color-ink-primary: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-faint: var(--ink-faint);
+  --color-on-brand: var(--on-brand);
+
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-tint: var(--brand-tint);
+  --color-focus-ring: var(--focus-ring);
+
+  --color-status-info: var(--status-info);
+  --color-status-info-tint: var(--status-info-tint);
+  --color-status-info-ink: var(--status-info-ink);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-tint: var(--status-warning-tint);
+  --color-status-warning-ink: var(--status-warning-ink);
+  --color-status-success: var(--status-success);
+  --color-status-success-tint: var(--status-success-tint);
+  --color-status-success-ink: var(--status-success-ink);
+  --color-status-danger: var(--status-danger);
+  --color-status-danger-tint: var(--status-danger-tint);
+  --color-status-danger-ink: var(--status-danger-ink);
+
+  /* radius scale — overrides Tailwind's defaults to match the spec */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+
+  /* shadow scale — overrides Tailwind's defaults, swaps per theme */
+  --shadow-sm: var(--shadow-elevation-sm);
+  --shadow-md: var(--shadow-elevation-md);
+  --shadow-lg: var(--shadow-elevation-lg);
+
+  /* type families — set from next/font variables in app/layout.tsx */
+  --font-display: var(--font-manrope), system-ui, sans-serif;
+  --font-body: var(--font-public-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 }
 
 @keyframes toast-in {
@@ -96,18 +221,17 @@
 
 @layer base {
   body {
-    @apply bg-stone-100 text-stone-900;
+    @apply bg-surface-canvas font-body text-ink-primary;
   }
 }
 
 @layer components {
-  /* Buttons: one shared base, three semantic variants. Always >=44px tall for tablet touch. */
+  /* --- deprecated shared classes ---
+     Kept for pages not yet migrated to the components/ui/ primitives.
+     Remove once every consumer below has migrated. */
   .btn {
     @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition active:scale-[0.97] disabled:cursor-not-allowed disabled:active:scale-100;
   }
-  /* Combine with .btn on the element, e.g. className="btn btn-primary" — Tailwind v4's
-     @apply can't reference another @layer components class, so composition happens
-     via two classes on the element rather than CSS-level inheritance. */
   .btn-primary {
     @apply bg-primary text-white shadow-sm hover:bg-primary-dark disabled:bg-stone-300 disabled:text-stone-500 disabled:shadow-none;
   }
@@ -127,5 +251,92 @@
 
   .card {
     @apply rounded-2xl border border-stone-200 bg-white shadow-sm;
+  }
+
+  /* --- type scale --- */
+  .display-lg {
+    font-family: var(--font-display);
+    font-size: 34px;
+    line-height: 40px;
+    font-weight: 700;
+  }
+  .display-md {
+    font-family: var(--font-display);
+    font-size: 28px;
+    line-height: 34px;
+    font-weight: 700;
+  }
+  .heading-lg {
+    font-family: var(--font-display);
+    font-size: 22px;
+    line-height: 28px;
+    font-weight: 700;
+  }
+  .heading-md {
+    font-family: var(--font-display);
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+  }
+  .heading-sm {
+    font-family: var(--font-display);
+    font-size: 15px;
+    line-height: 20px;
+    font-weight: 600;
+  }
+  .body-lg {
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 24px;
+    font-weight: 400;
+  }
+  .body-md {
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 22px;
+    font-weight: 400;
+  }
+  .body-sm {
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 400;
+  }
+  .label-md {
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .label-sm {
+    font-family: var(--font-body);
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .price-lg {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    line-height: 32px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .price-md {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    line-height: 24px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .order-code {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
 }

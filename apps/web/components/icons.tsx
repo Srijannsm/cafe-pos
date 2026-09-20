@@ -184,3 +184,49 @@ export function IconX({ className = "h-4 w-4" }: IconProps) {
     </svg>
   );
 }
+
+export function IconFlame({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M12 3s-5.5 5.2-5.5 10a5.5 5.5 0 0 0 11 0c0-1.7-.8-2.9-1.6-4-.2 1.4-1 2.2-1.7 2.4C14.9 9.5 14 7.2 12 3Z" />
+    </svg>
+  );
+}
+
+export function IconCheckCircle({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M8.5 12.3l2.3 2.3L15.5 9.5" />
+    </svg>
+  );
+}
+
+export function IconXCircle({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.5 9.5l5 5m0-5l-5 5" />
+    </svg>
+  );
+}
+
+export function IconReceipt({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M6 3.5h12v17l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3v-17Z" />
+      <path d="M8.5 8h7M8.5 11.5h7M8.5 15h4.5" />
+    </svg>
+  );
+}
+
+export function IconUsers({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="9" cy="8.5" r="3" />
+      <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+      <path d="M16 8.8a2.6 2.6 0 1 0 0-5.2" />
+      <path d="M15 14.2c2.5.4 4.5 2.2 4.5 4.8" />
+    </svg>
+  );
+}
