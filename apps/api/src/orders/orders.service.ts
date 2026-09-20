@@ -20,6 +20,7 @@ export class OrdersService {
           },
         },
         table: true,
+        waiter: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'asc' },
     });

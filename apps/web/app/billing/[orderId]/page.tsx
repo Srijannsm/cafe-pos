@@ -6,6 +6,9 @@ import { apiFetchJson, getCurrentUser } from "../../../lib/api";
 import { useRequireAuth } from "../../../lib/useRequireAuth";
 import { NavBar } from "../../../components/NavBar";
 import { IconAlert, IconBanknote, IconCheck, IconInfo, IconQrCode } from "../../../components/icons";
+import { Button } from "../../../components/ui/Button";
+import { StatusBadge } from "../../../components/ui/StatusBadge";
+import { PriceDisplay } from "../../../components/ui/PriceDisplay";
 
 type OrderItem = {
   id: number;
@@ -82,7 +85,7 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
       <main className="min-h-screen">
         <NavBar />
         <div className="mx-auto max-w-md p-4 sm:p-6">
-          <div className="h-96 animate-pulse rounded-2xl bg-stone-200" />
+          <div className="h-96 animate-pulse rounded-lg bg-surface-sunken" />
         </div>
       </main>
     );
@@ -96,22 +99,22 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
       <main className="min-h-screen">
         <NavBar />
         <div className="mx-auto flex max-w-md flex-col items-center gap-4 p-6 pt-16 text-center">
-          <div className="animate-pop flex h-20 w-20 items-center justify-center rounded-full bg-success-subtle">
-            <IconCheck className="h-10 w-10 text-success-subtle-fg" />
+          <div className="animate-pop flex h-20 w-20 items-center justify-center rounded-full bg-status-success-tint">
+            <IconCheck className="h-10 w-10 text-status-success-ink" />
           </div>
-          <h1 className="text-2xl font-bold text-stone-900">Payment received</h1>
-          <p className="text-stone-500">
+          <h1 className="heading-lg text-ink-primary">Payment received</h1>
+          <p className="body-md text-ink-secondary">
             {order.table.tableNumber} · Order #{order.id}
             {order.total && (
               <>
                 {" "}
-                · <span className="font-semibold text-stone-700">रु {order.total}</span>
+                · <PriceDisplay amount={order.total} />
               </>
             )}
           </p>
-          <button onClick={() => router.push("/")} className="btn btn-primary mt-4 w-full">
+          <Button onClick={() => router.push("/")} className="mt-4 w-full">
             Back to tables
-          </button>
+          </Button>
         </div>
       </main>
     );
@@ -121,61 +124,62 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
     <main className="min-h-screen">
       <NavBar />
       <div className="mx-auto max-w-md p-4 sm:p-6">
-        {/* Receipt card */}
-        <div className="card overflow-hidden">
-          <div className="border-b-2 border-dashed border-stone-200 p-5 text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-stone-400">Cafe POS</p>
-            <h1 className="mt-1 text-xl font-bold text-stone-900">{order.table.tableNumber}</h1>
-            <p className="text-sm text-stone-500">Order #{order.id}</p>
-            <span className="badge mt-2 bg-stone-200 text-stone-700">{order.status}</span>
+        <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface-raised shadow-sm">
+          <div className="border-b-2 border-dashed border-border-subtle p-5 text-center">
+            <p className="label-sm text-ink-faint">Cafe POS</p>
+            <h1 className="heading-lg mt-1 text-ink-primary">{order.table.tableNumber}</h1>
+            <p className="body-md text-ink-secondary">Order #{order.id}</p>
+            <div className="mt-2 inline-block">
+              <StatusBadge tone="neutral">{order.status}</StatusBadge>
+            </div>
           </div>
 
           <div className="space-y-2 p-5">
             {order.orderItems.map((item) => (
-              <div key={item.id} className="flex items-baseline justify-between text-sm">
-                <span className="text-stone-700">
+              <div key={item.id} className="body-md flex items-baseline justify-between">
+                <span className="text-ink-primary">
                   {item.quantity}× {item.menuItem.name}
                 </span>
-                <span className="flex-1 border-b border-dotted border-stone-300 mx-2 translate-y-[-3px]" />
+                <span className="mx-2 flex-1 translate-y-[-3px] border-b border-dotted border-border-strong" />
               </div>
             ))}
           </div>
 
           {order.total && (
-            <div className="flex items-center justify-between border-t-2 border-dashed border-stone-200 px-5 py-4">
-              <span className="text-sm font-bold uppercase tracking-wide text-stone-500">Total</span>
-              <span className="tabular-nums text-xl font-bold text-stone-900">रु {order.total}</span>
+            <div className="flex items-center justify-between border-t-2 border-dashed border-border-subtle px-5 py-4">
+              <span className="label-md text-ink-secondary">Total</span>
+              <PriceDisplay amount={order.total} size="lg" />
             </div>
           )}
         </div>
 
         <div className="mt-6">
           {(order.status === "served" || order.status === "billed") && !canBill && (
-            <div className="flex items-center gap-2 rounded-xl bg-info-subtle px-4 py-3 text-sm font-medium text-info-subtle-fg">
+            <div className="body-md flex items-center gap-2 rounded-md bg-status-info-tint px-4 py-3 text-status-info-ink">
               <IconInfo className="h-5 w-5 shrink-0" />
               This order is ready to be billed — please ask a cashier to complete this.
             </div>
           )}
 
           {order.status === "served" && canBill && (
-            <button onClick={handleGenerateBill} disabled={billing} className="btn btn-primary w-full">
+            <Button onClick={handleGenerateBill} disabled={billing} size="large" className="w-full">
               {billing ? "Generating bill…" : "Generate bill"}
-            </button>
+            </Button>
           )}
 
           {order.status === "billed" && canBill && (
             <div>
-              <p className="mb-3 text-sm font-semibold text-stone-500">Select payment method</p>
+              <p className="label-md mb-3 text-ink-secondary">Select payment method</p>
               <div className="grid grid-cols-2 gap-3">
                 {PAYMENT_METHODS.map((method) => (
                   <button
                     key={method.value}
                     onClick={() => handlePay(method.value)}
                     disabled={payingMethod !== null}
-                    className="card flex flex-col items-center gap-2 p-4 transition hover:border-primary hover:bg-primary-subtle active:scale-95 disabled:opacity-50"
+                    className="flex flex-col items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised p-4 shadow-sm transition hover:border-brand hover:bg-brand-tint active:scale-95 disabled:opacity-50"
                   >
-                    <method.icon className="h-6 w-6 text-stone-600" />
-                    <span className="text-sm font-semibold text-stone-800">
+                    <method.icon className="h-6 w-6 text-ink-secondary" />
+                    <span className="body-md font-semibold text-ink-primary">
                       {payingMethod === method.value ? "Recording…" : method.label}
                     </span>
                   </button>
@@ -186,7 +190,7 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
         </div>
 
         {error && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl bg-danger-subtle px-3 py-2 text-sm font-medium text-danger-subtle-fg">
+          <div className="body-md mt-4 flex items-center gap-2 rounded-md bg-status-danger-tint px-3 py-2 text-status-danger-ink">
             <IconAlert className="h-4 w-4 shrink-0" />
             {error}
           </div>
