@@ -299,6 +299,7 @@ export class OrdersService {
       },
       table: true,
       waiter: { select: { id: true, name: true } },
+      payments: true,
     },
   });
 

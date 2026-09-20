@@ -78,6 +78,49 @@
   --shadow-elevation-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-elevation-md: 0 4px 14px rgba(0, 0, 0, 0.45);
   --shadow-elevation-lg: 0 16px 36px rgba(0, 0, 0, 0.55);
+
+  /* Tailwind's utility classes (bg-surface-canvas, text-ink-primary, and so
+     on) read the color and shadow aliases below, not the raw tokens above
+     directly. Each alias is declared once in @theme as a reference to the
+     raw token, so its computed value is fixed wherever @theme's output
+     lands (:root) and inherits from there as a constant; it does not
+     re-resolve using a raw-token override further down the tree. Since
+     data-theme="dark" is applied to a nested wrapper (Kitchen's main
+     element), not :root, the raw overrides above never reached the
+     aliases without this block redeclaring them at the same element. */
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --color-ink-primary: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-faint: var(--ink-faint);
+  --color-on-brand: var(--on-brand);
+
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-tint: var(--brand-tint);
+  --color-focus-ring: var(--focus-ring);
+
+  --color-status-info: var(--status-info);
+  --color-status-info-tint: var(--status-info-tint);
+  --color-status-info-ink: var(--status-info-ink);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-tint: var(--status-warning-tint);
+  --color-status-warning-ink: var(--status-warning-ink);
+  --color-status-success: var(--status-success);
+  --color-status-success-tint: var(--status-success-tint);
+  --color-status-success-ink: var(--status-success-ink);
+  --color-status-danger: var(--status-danger);
+  --color-status-danger-tint: var(--status-danger-tint);
+  --color-status-danger-ink: var(--status-danger-ink);
+
+  --shadow-sm: var(--shadow-elevation-sm);
+  --shadow-md: var(--shadow-elevation-md);
+  --shadow-lg: var(--shadow-elevation-lg);
 }
 
 @theme {
@@ -193,6 +236,46 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@page {
+  /* CSS has no way to express "fixed width, unlimited height" for a page —
+     "auto" is only valid alone, never mixed with a length (spec: size:
+     auto | <length>{1,2}). A real 80mm thermal printer gets correct
+     continuous-roll sizing from its own driver-registered paper size, not
+     from this rule. This fixed height is just a sane fallback for
+     printing to PDF or a non-roll printer. */
+  size: 80mm 400mm;
+  margin: 4mm;
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .receipt-print {
+    /* Tailwind's utility classes read the --color-ink, --color-surface and
+       --color-border theme aliases, not the raw tokens directly. Each
+       alias is declared once at :root as a reference to the raw token, and
+       inherits as an already-substituted value from there — redeclaring
+       the raw token on a nested element doesn't reach utilities that
+       already resolved through the alias. Override the aliases instead. */
+    --color-surface-canvas: #ffffff;
+    --color-surface-raised: #ffffff;
+    --color-surface-sunken: #ffffff;
+    --color-border-subtle: #000000;
+    --color-border-strong: #000000;
+    --color-ink-primary: #000000;
+    --color-ink-secondary: #000000;
+    --color-ink-faint: #000000;
+    width: 100%;
+    padding: 2mm !important;
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
 }
 

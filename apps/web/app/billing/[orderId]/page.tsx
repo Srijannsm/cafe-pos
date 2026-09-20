@@ -72,7 +72,7 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ method }),
       });
-      await refresh();
+      router.push(`/billing/${orderId}/receipt`);
     } catch {
       setError("Could not record payment.");
     } finally {
