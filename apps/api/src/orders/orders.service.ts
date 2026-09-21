@@ -305,6 +305,33 @@ export class OrdersService {
     });
   }
 
+  // A customer can still say "add one more thing" after being billed but
+  // before actually paying -- this undoes generateBill so the order goes
+  // back through addItem()'s normal 'served' -> 'preparing' reopening if
+  // something new is added, or straight back to Serve if the waiter just
+  // mis-clicked. The total is cleared rather than left stale, since it was
+  // only ever correct for the item set at the moment it was billed.
+  async reopenToServed(orderId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} does not exist`);
+    }
+
+    if (order.status !== 'billed') {
+      throw new BadRequestException(
+        `Order ${orderId} cannot be reopened from status "${order.status}"`,
+      );
+    }
+
+    return this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: 'served', total: null },
+    });
+  }
+
   async recordPayment(orderId: number, dto: RecordPaymentDto) {
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },

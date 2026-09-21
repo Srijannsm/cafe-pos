@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiFetchJson } from "../../../lib/api";
 import { useRequireAuth } from "../../../lib/useRequireAuth";
 import { useOrdersSocket } from "../../../lib/useOrdersSocket";
@@ -164,6 +165,16 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       await refreshOrder();
     } catch {
       setError("Could not mark the order as served.");
+    }
+  }
+
+  async function handleReadyToBill() {
+    setError("");
+    try {
+      await apiFetchJson(`/orders/${id}/bill`, { method: "PATCH" });
+      await refreshOrder();
+    } catch {
+      setError("Could not mark the order ready to bill.");
     }
   }
 
@@ -399,6 +410,19 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                   <p className="body-sm text-center text-ink-faint">
                     Waiting on the kitchen to mark every item ready.
                   </p>
+                )}
+                <Button onClick={handleReadyToBill} disabled={order.status !== "served"} variant="secondary" className="w-full">
+                  Ready to be billed
+                </Button>
+                {order.status === "billed" && (
+                  <div className="rounded-md bg-status-info-tint p-3 text-center">
+                    <p className="body-sm text-status-info-ink">
+                      This order is billed. Payment is collected from the Billing page.
+                    </p>
+                    <Link href={`/billing/${order.id}`} className="body-sm font-semibold text-status-info-ink underline">
+                      Open billing
+                    </Link>
+                  </div>
                 )}
 
                 {order.status === "pending" &&

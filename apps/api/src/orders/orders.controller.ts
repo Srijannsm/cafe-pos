@@ -61,10 +61,17 @@ export class OrdersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin', 'cashier')
+  @Roles('waiter', 'admin', 'cashier')
   @Patch(':orderId/bill')
   generateBill(@Param('orderId', ParseIntPipe) orderId: number) {
     return this.ordersService.generateBill(orderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin', 'cashier')
+  @Patch(':orderId/reopen')
+  reopen(@Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.reopenToServed(orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

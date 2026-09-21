@@ -38,6 +38,7 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState("");
   const [billing, setBilling] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [payingMethod, setPayingMethod] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,6 +61,23 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
       setError("Could not generate the bill.");
     } finally {
       setBilling(false);
+    }
+  }
+
+  // Customer wants one more thing after being billed but before paying --
+  // this undoes the bill so the waiter can add items again from the Order
+  // page (it'll reopen from "served" to "preparing" there if anything new
+  // actually gets added).
+  async function handleReopen() {
+    setError("");
+    setReopening(true);
+    try {
+      await apiFetchJson(`/orders/${orderId}/reopen`, { method: "PATCH" });
+      await refresh();
+    } catch {
+      setError("Could not send this order back to the waiter.");
+    } finally {
+      setReopening(false);
     }
   }
 
@@ -185,6 +203,14 @@ export default function BillingPage({ params }: { params: Promise<{ orderId: str
                   </button>
                 ))}
               </div>
+              <Button
+                onClick={handleReopen}
+                disabled={reopening || payingMethod !== null}
+                variant="secondary"
+                className="mt-3 w-full"
+              >
+                {reopening ? "Sending back…" : "Customer wants to add something — send back"}
+              </Button>
             </div>
           )}
         </div>

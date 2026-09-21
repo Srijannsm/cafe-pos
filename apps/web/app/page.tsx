@@ -85,7 +85,11 @@ export default function Home() {
 
     if (!table.activeOrderId) return;
 
-    if (table.activeOrderStatus === "served" || table.activeOrderStatus === "billed") {
+    // "served" still goes to the Order page, not straight to Billing --
+    // the customer may want another round before anyone bills them. Only
+    // "billed" (the waiter or cashier explicitly marked it ready) jumps to
+    // collecting payment.
+    if (table.activeOrderStatus === "billed") {
       router.push(`/billing/${table.activeOrderId}`);
     } else {
       router.push(`/order/${table.activeOrderId}`);
