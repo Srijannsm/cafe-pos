@@ -180,9 +180,9 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   the whole batch in one POST) rather than the waiter screen's
   add-one-at-a-time pattern, since a customer doesn't have a live
   order to append to until their first submission creates one.
-- /admin/tables lists each table's ordering link (copy + regenerate) but
-  does not render an actual QR image yet -- first cut ships the raw link
-  only; a real `qrcode`-rendered/printable code is a known follow-up.
+- /admin/tables lists each table's ordering link (copy + regenerate) and
+  renders an actual scannable QR code (qrcode.react, client-side SVG) in
+  a modal, with a print action sized for a table tent.
 
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and
