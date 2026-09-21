@@ -10,7 +10,9 @@ SaaS product after the first client's system is stable.
 - Frontend: Next.js (App Router) — will serve POS terminal, kitchen display, and
   admin dashboard as separate routes in one app
 - Database: PostgreSQL, accessed via Prisma ORM
-- Waiter app: PWA (Next.js), React Native planned for v2 if Bluetooth printing is needed
+- Waiter app: installable PWA (Next.js + manifest.json, standalone display,
+  on-brand icons) -- same site, same login, just installable on desktop/mobile.
+  React Native still planned for v2 if Bluetooth printing is needed.
 - Real-time sync: Socket.io via NestJS WebSocket Gateway (`OrdersGateway`) --
   built for the kitchen<->waiter relation only: `order.sentToKitchen` and
   `order.itemReady`, broadcast to all connected clients (no rooms). Tables
@@ -60,8 +62,16 @@ SaaS product after the first client's system is stable.
 - Socket events beyond the two kitchen<->waiter ones above (e.g. nothing
   pushes to Tables or Billing yet -- they still poll)
 
+## Admin capabilities
+- Menu management (categories, items, modifiers), table management, and
+  staff management (add waiters/cashiers, edit roles, deactivate, reset
+  PINs) all live under /admin in the web app. Nothing requires editing the
+  DB or seed script by hand anymore for day-to-day staff changes.
+
 ## Known gaps (tracked, not urgent for MVP)
-- No real automated test coverage — NestJS's auto-generated .spec.ts files
-  exist but were never filled in with real logic, and currently fail since
-  they don't provide PrismaService. Acceptable tradeoff for MVP timeline,
-  but should be addressed before this scales to multiple clients.
+- Test coverage: OrdersService (the full order lifecycle) and AuthService
+  (PIN login) now have real unit tests against a mocked PrismaService —
+  see src/orders/orders.service.spec.ts and src/auth/auth.service.spec.ts.
+  The remaining .spec.ts files are still "should be defined" stubs (now at
+  least passing DI correctly, unlike before). Controller-level and e2e
+  coverage is still not built.
