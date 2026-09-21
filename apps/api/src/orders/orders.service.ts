@@ -4,10 +4,14 @@ import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
 import { RecordPaymentDto } from './dto/record-payment.dto.js';
 import { Prisma, OrderStatus } from '../generated/prisma/client.js';
+import { OrdersGateway } from './orders.gateway.js';
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private ordersGateway: OrdersGateway,
+  ) {}
 
   async findAll(status?: OrderStatus) {
     return this.prisma.order.findMany({
@@ -128,10 +132,14 @@ export class OrdersService {
     );
   }
 
-  return this.prisma.order.update({
+  const updated = await this.prisma.order.update({
     where: { id: orderId },
     data: { status: 'preparing' },
   });
+
+  this.ordersGateway.emitOrderSentToKitchen({ orderId: updated.id });
+
+  return updated;
 }
 
     async markItemReady(orderItemId: number) {
@@ -149,11 +157,18 @@ export class OrdersService {
     );
   }
 
-  return this.prisma.orderItem.update({
+  const updated = await this.prisma.orderItem.update({
     where: { id: orderItemId },
     data: { status: 'ready' },
   });
-}    
+
+  this.ordersGateway.emitOrderItemReady({
+    orderId: updated.orderId,
+    orderItemId: updated.id,
+  });
+
+  return updated;
+}
 
     async serve(orderId: number) {
   const order = await this.prisma.order.findUnique({

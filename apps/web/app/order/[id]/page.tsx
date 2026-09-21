@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetchJson } from "../../../lib/api";
 import { useRequireAuth } from "../../../lib/useRequireAuth";
+import { useOrdersSocket } from "../../../lib/useOrdersSocket";
 import { NavBar } from "../../../components/NavBar";
 import { useToast } from "../../../components/Toast";
 import { IconChevronRight, IconMinus, IconPlus, IconAlert } from "../../../components/icons";
@@ -95,6 +96,15 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       .then(setMenu)
       .finally(() => setMenuLoading(false));
   }, [ready, refreshOrder]);
+
+  // This page never polled at all before -- a waiter had no way to know an
+  // item was ready short of walking to the kitchen. Kitchen marking an item
+  // ready now refreshes this ticket instantly.
+  useOrdersSocket(ready, {
+    onItemReady: (payload) => {
+      if (payload.orderId === Number(id)) refreshOrder();
+    },
+  });
 
   function selectItem(item: MenuItem) {
     if (selectedItemId === item.id) {

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { apiFetchJson } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
+import { useOrdersSocket } from "../../lib/useOrdersSocket";
 import { NavBar } from "../../components/NavBar";
 import { IconClock, IconInbox } from "../../components/icons";
 import { Card } from "../../components/ui/Card";
@@ -49,6 +50,12 @@ export default function KitchenPage() {
     const interval = setInterval(loadOrders, 5000);
     return () => clearInterval(interval);
   }, [ready, loadOrders]);
+
+  // Push: a waiter's "Send to Kitchen" shows up here immediately instead of
+  // waiting for the next 5s poll. The poll above stays as a fallback.
+  useOrdersSocket(ready, {
+    onSentToKitchen: () => loadOrders(),
+  });
 
   async function markReady(orderItemId: number) {
     setOrders((current) =>

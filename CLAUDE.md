@@ -11,7 +11,10 @@ SaaS product after the first client's system is stable.
   admin dashboard as separate routes in one app
 - Database: PostgreSQL, accessed via Prisma ORM
 - Waiter app: PWA (Next.js), React Native planned for v2 if Bluetooth printing is needed
-- Real-time sync: Socket.io via NestJS WebSocket Gateway (not built yet)
+- Real-time sync: Socket.io via NestJS WebSocket Gateway (`OrdersGateway`) --
+  built for the kitchen<->waiter relation only: `order.sentToKitchen` and
+  `order.itemReady`, broadcast to all connected clients (no rooms). Tables
+  floor view and Billing still rely on plain polling, not sockets.
 
 ## Monorepo structure
 - apps/api      → NestJS backend (port 4000)
@@ -54,7 +57,8 @@ SaaS product after the first client's system is stable.
 - Full stack background: Django, Laravel, NestJS, Next.js, React Native, PostgreSQL
 
 ## Not yet built (do not assume these exist)
-- WebSocket real-time sync
+- Socket events beyond the two kitchen<->waiter ones above (e.g. nothing
+  pushes to Tables or Billing yet -- they still poll)
 
 ## Known gaps (tracked, not urgent for MVP)
 - No real automated test coverage — NestJS's auto-generated .spec.ts files
