@@ -11,6 +11,7 @@ import { TablesModule } from './tables/tables.module.js';
 import { CafesModule } from './cafes/cafes.module.js';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module.js';
 import { PlatformAuthModule } from './platform-auth/platform-auth.module.js';
+import { ReportsModule } from './reports/reports.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { PlatformAuthModule } from './platform-auth/platform-auth.module.js';
     CafesModule,
     PlatformAuthModule,
     PlatformAdminModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

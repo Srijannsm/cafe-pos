@@ -120,6 +120,19 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   SUPERADMIN_PASSWORD in .env via `npm run seed` (apps/api) -- there's no
   public signup, and this is internal-only, not linked from the app nav.
 
+## Reports & analytics
+- /admin/reports (web) + ReportsModule (api, admin-only) covers revenue
+  by day, top-selling menu items, and payment-method mix, over a date
+  range (Today / 7 days / 30 days presets). Revenue is read off Payment
+  rows (Payment.paidAt), not Order.total, since Order.total gets cleared
+  if a bill is reopened -- Payment.amount is the actual amount collected.
+- Date ranges are resolved in UTC (setUTCHours, not local setHours) to
+  avoid mixing a UTC-parsed date string with a local-timezone day
+  boundary. This is a simplification, not full per-cafe timezone support
+  -- a day bucket is a UTC calendar day, so orders placed very late/early
+  local night can land in the "wrong" day's bucket for a cafe far from
+  UTC. Fine for now; revisit if that becomes a real complaint.
+
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and
   AuthService (cafe-aware PIN login) have real unit tests against a mocked
