@@ -61,6 +61,16 @@ export class OrdersService {
     });
   }
 
+  // A customer ordering in rounds (food first, a drink later) is the normal
+  // case, not an edge case -- so items can join an order any time before the
+  // bill is generated. Once it's billed the total is locked in, so that (and
+  // paid/cancelled) are the only statuses this refuses.
+  private static readonly ADDABLE_STATUSES: OrderStatus[] = [
+    'pending',
+    'preparing',
+    'served',
+  ];
+
   async addItem(orderId: number, dto: AddOrderDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -70,7 +80,7 @@ export class OrdersService {
       throw new NotFoundException(`Order ${orderId} does not exist`);
     }
 
-    if (order.status !== 'pending') {
+    if (!OrdersService.ADDABLE_STATUSES.includes(order.status)) {
       throw new BadRequestException(
         `Cannot add items to an order with status "${order.status}"`,
       );
@@ -84,7 +94,7 @@ export class OrdersService {
       throw new NotFoundException(`Menu item ${dto.menuItemId} does not exist`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const orderItem = await tx.orderItem.create({
         data: {
           orderId,
@@ -103,11 +113,28 @@ export class OrdersService {
         });
       }
 
+      // A new round on an order the kitchen already finished ("served")
+      // needs to go back to "preparing" -- otherwise Kitchen's board
+      // (which only queries status=preparing) would never show this new
+      // item, and Serve would stay wrongly enabled from the last round.
+      if (order.status === 'served') {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: 'preparing' },
+        });
+      }
+
       return tx.orderItem.findUnique({
         where: { id: orderItem.id },
         include: { orderItemModifiers: { include: { modifier: true } } },
       });
     });
+
+    if (order.status === 'served') {
+      this.ordersGateway.emitOrderSentToKitchen({ orderId });
+    }
+
+    return result;
   }
 
   async sendToKitchen(orderId: number) {

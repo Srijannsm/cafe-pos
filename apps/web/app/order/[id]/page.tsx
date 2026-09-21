@@ -326,7 +326,9 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               <div>
                 <h2 className="heading-lg text-ink-primary">Order #{order.id}</h2>
                 <div className="mt-1">
-                  <StatusBadge tone={STATUS_TONE[order.status]}>{order.status}</StatusBadge>
+                  <StatusBadge tone={order.status === "preparing" && allItemsReady ? "success" : STATUS_TONE[order.status]}>
+                    {order.status === "preparing" && allItemsReady ? "ready to serve" : order.status}
+                  </StatusBadge>
                 </div>
               </div>
             </div>
