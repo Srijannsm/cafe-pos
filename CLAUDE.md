@@ -103,14 +103,22 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   staff member's own cafe. Nothing requires editing the DB or seed script
   by hand anymore for day-to-day staff changes.
 
-## Platform admin (internal cafe onboarding)
-- New cafes are onboarded at /platform (web) via PlatformAdminModule
-  (api) -- creates the Cafe row and its first admin user (name + PIN
-  chosen at creation) in one step, and lists/deactivates existing cafes.
-  This is internal-only: no public signup, gated by a single shared
-  secret (PLATFORM_ADMIN_SECRET env var, not the per-cafe JWT system,
-  since onboarding happens before that cafe's admin exists). Not linked
-  from anywhere in the app nav on purpose.
+## Platform admin (internal superadmin panel)
+- /platform (web) + PlatformAdminModule/PlatformAuthModule (api) is the
+  internal superadmin panel: sign in at /platform/login, see a
+  platform-wide dashboard (cafe/staff/order counts), onboard a new cafe
+  with its first admin (name + PIN chosen at creation) in one step, click
+  into a cafe's detail page (staff, menu/table/order counts, recent
+  orders), and activate/deactivate a cafe.
+- Superadmins are a separate `PlatformUser` model (username + hashed
+  password) -- not per-cafe `User` rows, and not scoped to any cafe.
+  Their JWT is signed with its own secret (PLATFORM_JWT_SECRET, not
+  JWT_SECRET) and carries `type: 'platform'`, checked by a dedicated
+  `platform-jwt` Passport strategy/guard, so a superadmin session and a
+  cafe staff session are never interchangeable even if a token leaked.
+- The one superadmin account is seeded from SUPERADMIN_USERNAME /
+  SUPERADMIN_PASSWORD in .env via `npm run seed` (apps/api) -- there's no
+  public signup, and this is internal-only, not linked from the app nav.
 
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and

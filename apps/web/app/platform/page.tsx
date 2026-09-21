@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   platformFetchJson,
-  getPlatformSecret,
-  setPlatformSecret,
-  clearPlatformSecret,
+  getPlatformToken,
+  getCurrentPlatformUser,
+  platformLogout,
 } from "../../lib/api";
 import { useToast } from "../../components/Toast";
-import { IconGrid, IconPlus, IconKey } from "../../components/icons";
+import { IconGrid, IconPlus, IconLogout, IconUsers, IconClipboardList, IconBanknote } from "../../components/icons";
 import { SectionCard } from "../admin/_components/SectionCard";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
@@ -22,6 +24,13 @@ type CafeRow = {
   _count: { users: number; orders: number };
 };
 
+type Overview = {
+  totalCafes: number;
+  activeCafes: number;
+  totalStaff: number;
+  totalOrders: number;
+};
+
 function slugify(name: string) {
   return name
     .toLowerCase()
@@ -30,13 +39,26 @@ function slugify(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-export default function PlatformAdminPage() {
+function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-4 rounded-lg border border-border-subtle bg-surface-raised p-5 shadow-sm">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand-strong">
+        {icon}
+      </span>
+      <div>
+        <p className="display-md text-ink-primary">{value}</p>
+        <p className="label-sm text-ink-secondary">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+export default function PlatformDashboardPage() {
+  const router = useRouter();
   const { showToast, toastHost } = useToast();
 
-  const [unlocked, setUnlocked] = useState(false);
-  const [secretDraft, setSecretDraft] = useState("");
-  const [checking, setChecking] = useState(true);
-
+  const [ready, setReady] = useState(false);
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [cafes, setCafes] = useState<CafeRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -47,43 +69,28 @@ export default function PlatformAdminPage() {
   const [adminPin, setAdminPin] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function refreshCafes() {
-    const res = await platformFetchJson<CafeRow[]>("/platform/cafes");
-    setCafes(res);
+  async function refreshAll() {
+    const [overviewRes, cafesRes] = await Promise.all([
+      platformFetchJson<Overview>("/platform/overview"),
+      platformFetchJson<CafeRow[]>("/platform/cafes"),
+    ]);
+    setOverview(overviewRes);
+    setCafes(cafesRes);
   }
 
   useEffect(() => {
-    const stored = getPlatformSecret();
-    if (!stored) {
-      setChecking(false);
+    if (!getPlatformToken()) {
+      router.replace("/platform/login");
       return;
     }
-    platformFetchJson<CafeRow[]>("/platform/cafes")
-      .then((res) => {
-        setCafes(res);
-        setUnlocked(true);
+    refreshAll()
+      .then(() => setReady(true))
+      .catch(() => {
+        // platformFetchJson already redirects to /platform/login on a 401
       })
-      .catch(() => clearPlatformSecret())
-      .finally(() => {
-        setChecking(false);
-        setLoading(false);
-      });
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function handleUnlock(e: React.FormEvent) {
-    e.preventDefault();
-    setPlatformSecret(secretDraft);
-    try {
-      const res = await platformFetchJson<CafeRow[]>("/platform/cafes");
-      setCafes(res);
-      setUnlocked(true);
-    } catch {
-      clearPlatformSecret();
-      showToast("That secret didn't work", "error");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleCreateCafe(e: React.FormEvent) {
     e.preventDefault();
@@ -100,7 +107,7 @@ export default function PlatformAdminPage() {
       setSlugTouched(false);
       setAdminName("");
       setAdminPin("");
-      await refreshCafes();
+      await refreshAll();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not create that cafe", "error");
     } finally {
@@ -115,14 +122,19 @@ export default function PlatformAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !cafe.isActive }),
       });
-      await refreshCafes();
+      await refreshAll();
       showToast(cafe.isActive ? `"${cafe.name}" deactivated` : `"${cafe.name}" reactivated`);
     } catch {
       showToast(`Could not update "${cafe.name}"`, "error");
     }
   }
 
-  if (checking) {
+  function handleLogout() {
+    platformLogout();
+    router.push("/platform/login");
+  }
+
+  if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-canvas">
         <div className="h-8 w-40 animate-pulse rounded-md bg-surface-sunken" />
@@ -130,43 +142,36 @@ export default function PlatformAdminPage() {
     );
   }
 
-  if (!unlocked) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
-        <div className="text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-on-brand">
-            <IconKey className="h-5 w-5" />
-          </div>
-          <h1 className="heading-lg text-ink-primary">Platform admin</h1>
-          <p className="body-md mt-1 text-ink-secondary">Internal only -- enter the platform secret to continue.</p>
-        </div>
-        <form onSubmit={handleUnlock} className="flex flex-col gap-3">
-          <Input
-            type="password"
-            autoFocus
-            className="w-72"
-            placeholder="Platform secret"
-            value={secretDraft}
-            onChange={(e) => setSecretDraft(e.target.value)}
-          />
-          <Button type="submit" disabled={!secretDraft}>
-            Unlock
-          </Button>
-        </form>
-        {toastHost}
-      </main>
-    );
-  }
+  const currentUser = getCurrentPlatformUser();
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 p-6 sm:p-10">
+    <div className="mx-auto max-w-4xl space-y-8 p-6 sm:p-10">
       {toastHost}
-      <div>
-        <h1 className="display-md text-ink-primary">Platform admin</h1>
-        <p className="body-md mt-1 text-ink-secondary">
-          Onboard a new cafe with its first admin account, or deactivate one that shouldn&apos;t log in anymore.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="display-md text-ink-primary">Platform admin</h1>
+          <p className="body-md mt-1 text-ink-secondary">
+            {currentUser ? `Signed in as ${currentUser.username}. ` : ""}Onboard cafes and keep an eye on the platform.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="label-sm flex items-center gap-1.5 rounded-md border border-border-subtle px-3 py-2 text-ink-secondary transition hover:bg-surface-sunken"
+        >
+          <IconLogout className="h-4 w-4" />
+          Sign out
+        </button>
       </div>
+
+      {overview && (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatTile icon={<IconGrid />} label="Cafes" value={overview.totalCafes} />
+          <StatTile icon={<IconGrid />} label="Active cafes" value={overview.activeCafes} />
+          <StatTile icon={<IconUsers />} label="Staff, platform-wide" value={overview.totalStaff} />
+          <StatTile icon={<IconClipboardList />} label="Orders, all-time" value={overview.totalOrders} />
+        </div>
+      )}
 
       <SectionCard
         icon={<IconPlus />}
@@ -224,7 +229,7 @@ export default function PlatformAdminPage() {
         </form>
       </SectionCard>
 
-      <SectionCard icon={<IconGrid />} title="Cafes on the platform" description="Every tenant, and their current status.">
+      <SectionCard icon={<IconBanknote />} title="Cafes on the platform" description="Every tenant, and their current status.">
         {loading ? (
           <div className="space-y-2">
             {Array.from({ length: 2 }).map((_, i) => (
@@ -246,7 +251,11 @@ export default function PlatformAdminPage() {
               <tbody>
                 {cafes.map((cafe) => (
                   <tr key={cafe.id} className="border-b border-border-subtle last:border-0">
-                    <td className="py-4 pr-4 body-md font-medium text-ink-primary">{cafe.name}</td>
+                    <td className="py-4 pr-4">
+                      <Link href={`/platform/cafes/${cafe.id}`} className="body-md font-medium text-brand-strong hover:underline">
+                        {cafe.name}
+                      </Link>
+                    </td>
                     <td className="py-4 pr-4 body-md text-ink-secondary">/c/{cafe.slug}/login</td>
                     <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.users}</td>
                     <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.orders}</td>

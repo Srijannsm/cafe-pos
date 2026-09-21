@@ -58,6 +58,19 @@ enum PaymentMethod {
 // visible to another. `slug` is what identifies a cafe in the URL
 // (/c/:slug/login) since staff log in with a 4-digit PIN, not an email --
 // the slug is how the app knows *which* cafe's staff list to show.
+// A superadmin who can manage cafes through the internal /platform panel.
+// Deliberately separate from User (per-cafe staff, PIN login) -- platform
+// users aren't scoped to any cafe and authenticate with a real
+// username/password instead.
+model PlatformUser {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("platform_users")
+}
+
 model Cafe {
   id        Int      @id @default(autoincrement())
   name      String

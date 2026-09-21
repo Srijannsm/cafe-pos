@@ -66,30 +66,62 @@ export function logout() {
   localStorage.removeItem("currentUser");
 }
 
-// Separate from the staff PIN-login auth above: the internal cafe-onboarding
-// tool (apps/web/app/platform) authenticates with a single shared secret
-// instead, since it's used before any cafe (or its admin user) exists.
-const PLATFORM_SECRET_KEY = "platformSecret";
+// Separate from the staff PIN-login auth above: the internal superadmin
+// panel (apps/web/app/platform) has its own login (username/password, see
+// PlatformAuthModule) and its own token, kept in its own localStorage key
+// so a platform session and a cafe staff session never get confused.
+const PLATFORM_TOKEN_KEY = "platformToken";
 
-export function getPlatformSecret(): string | null {
+export type PlatformUser = {
+  id: number;
+  username: string;
+};
+
+export function getPlatformToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(PLATFORM_SECRET_KEY);
+  return localStorage.getItem(PLATFORM_TOKEN_KEY);
 }
 
-export function setPlatformSecret(secret: string) {
-  localStorage.setItem(PLATFORM_SECRET_KEY, secret);
+export function platformLogout() {
+  localStorage.removeItem(PLATFORM_TOKEN_KEY);
+  localStorage.removeItem("platformUser");
 }
 
-export function clearPlatformSecret() {
-  localStorage.removeItem(PLATFORM_SECRET_KEY);
+export function getCurrentPlatformUser(): PlatformUser | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem("platformUser");
+  return raw ? JSON.parse(raw) : null;
+}
+
+export async function platformLogin(username: string, password: string): Promise<PlatformUser> {
+  const res = await fetch(`${API_URL}/platform/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    throw new Error("Invalid username or password");
+  }
+
+  const result: { accessToken: string; user: PlatformUser } = await res.json();
+  localStorage.setItem(PLATFORM_TOKEN_KEY, result.accessToken);
+  localStorage.setItem("platformUser", JSON.stringify(result.user));
+  return result.user;
 }
 
 export async function platformFetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
-  const secret = getPlatformSecret();
+  const token = getPlatformToken();
   const headers = new Headers(options.headers);
-  if (secret) headers.set("x-platform-secret", secret);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+
+  if (res.status === 401) {
+    platformLogout();
+    window.location.href = "/platform/login";
+    throw new Error("Platform session expired");
+  }
 
   if (!res.ok) {
     const serverMessage = await res

@@ -78,6 +78,28 @@ async function seedCafe(opts: {
   return cafe;
 }
 
+// Creates or updates the one superadmin account used to log into
+// /platform, from env vars rather than hardcoded values -- same reasoning
+// as seedCafe() being a repeatable upsert rather than a one-time script.
+async function seedPlatformUser() {
+  const username = process.env.SUPERADMIN_USERNAME;
+  const password = process.env.SUPERADMIN_PASSWORD;
+
+  if (!username || !password) {
+    console.log('Skipping superadmin seed -- SUPERADMIN_USERNAME/SUPERADMIN_PASSWORD not set in .env');
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  await prisma.platformUser.upsert({
+    where: { username },
+    update: { passwordHash },
+    create: { username, passwordHash },
+  });
+
+  console.log(`Superadmin "${username}" is ready -- log in at /platform/login`);
+}
+
 async function main() {
   const cafe = await seedCafe({
     slug: 'mittho-cafe',
@@ -87,6 +109,8 @@ async function main() {
   });
 
   console.log(`Seed data is up to date. Log in at /c/${cafe.slug}/login`);
+
+  await seedPlatformUser();
 }
 
 main()

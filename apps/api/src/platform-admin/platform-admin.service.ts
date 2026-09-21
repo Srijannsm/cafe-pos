@@ -17,11 +17,59 @@ const CAFE_SUMMARY_SELECT = {
 export class PlatformAdminService {
   constructor(private prisma: PrismaService) {}
 
+  async getOverview() {
+    const [totalCafes, activeCafes, totalStaff, totalOrders] = await Promise.all([
+      this.prisma.cafe.count(),
+      this.prisma.cafe.count({ where: { isActive: true } }),
+      this.prisma.user.count(),
+      this.prisma.order.count(),
+    ]);
+
+    return { totalCafes, activeCafes, totalStaff, totalOrders };
+  }
+
   findAllCafes() {
     return this.prisma.cafe.findMany({
       select: CAFE_SUMMARY_SELECT,
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findCafeDetail(id: number) {
+    const cafe = await this.prisma.cafe.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        createdAt: true,
+        users: {
+          select: { id: true, name: true, role: true, isActive: true },
+          orderBy: { name: 'asc' },
+        },
+        _count: { select: { menuItems: true, tables: true, orders: true } },
+      },
+    });
+    if (!cafe) {
+      throw new NotFoundException(`Cafe ${id} does not exist`);
+    }
+
+    const recentOrders = await this.prisma.order.findMany({
+      where: { cafeId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        orderType: true,
+        status: true,
+        total: true,
+        createdAt: true,
+        table: { select: { tableNumber: true } },
+      },
+    });
+
+    return { ...cafe, recentOrders };
   }
 
   async createCafe(dto: CreateCafeDto) {
