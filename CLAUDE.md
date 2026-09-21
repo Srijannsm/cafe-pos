@@ -94,8 +94,7 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
 ## Not yet built (do not assume these exist)
 - Socket events beyond the two kitchen<->waiter ones above (e.g. nothing
   pushes to Tables or Billing yet -- they still poll)
-- A cafe signup/onboarding flow — the `Cafe` table is currently seeded by
-  hand (see prisma/seed.ts), not created through any UI or API endpoint
+- Public/self-serve cafe signup -- onboarding is internal-only (see below)
 
 ## Admin capabilities
 - Menu management (categories, items, modifiers), table management, and
@@ -103,6 +102,15 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   PINs) all live under /admin in the web app, scoped to the logged-in
   staff member's own cafe. Nothing requires editing the DB or seed script
   by hand anymore for day-to-day staff changes.
+
+## Platform admin (internal cafe onboarding)
+- New cafes are onboarded at /platform (web) via PlatformAdminModule
+  (api) -- creates the Cafe row and its first admin user (name + PIN
+  chosen at creation) in one step, and lists/deactivates existing cafes.
+  This is internal-only: no public signup, gated by a single shared
+  secret (PLATFORM_ADMIN_SECRET env var, not the per-cafe JWT system,
+  since onboarding happens before that cafe's admin exists). Not linked
+  from anywhere in the app nav on purpose.
 
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and
