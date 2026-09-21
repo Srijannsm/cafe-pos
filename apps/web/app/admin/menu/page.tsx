@@ -29,6 +29,9 @@ type MenuItem = {
   categoryId: number;
   category: Category;
   modifiers: Modifier[];
+  trackStock: boolean;
+  stockQuantity: number;
+  lowStockThreshold: number;
 };
 
 const selectClass =
@@ -52,6 +55,7 @@ export default function MenuManagementPage() {
   const [editingModifierId, setEditingModifierId] = useState<number | null>(null);
 
   const [itemSearch, setItemSearch] = useState("");
+  const [restockDrafts, setRestockDrafts] = useState<Record<number, string>>({});
 
   const [activeTab, setActiveTab] = useState<"category" | "item" | "modifier">("category");
 
@@ -153,6 +157,39 @@ export default function MenuManagementPage() {
       }
     } catch {
       showToast(`Could not update "${item.name}"`, "error");
+    }
+  }
+
+  async function handleToggleTrackStock(item: MenuItem) {
+    try {
+      await apiFetchJson(`/menu/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackStock: !item.trackStock }),
+      });
+      await refreshAll();
+      showToast(
+        item.trackStock ? `Stock tracking off for "${item.name}"` : `Now tracking stock for "${item.name}"`,
+      );
+    } catch {
+      showToast(`Could not update "${item.name}"`, "error");
+    }
+  }
+
+  async function handleRestock(item: MenuItem) {
+    const delta = Number(restockDrafts[item.id]);
+    if (!delta) return;
+    try {
+      await apiFetchJson(`/menu/${item.id}/stock`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta }),
+      });
+      setRestockDrafts((cur) => ({ ...cur, [item.id]: "" }));
+      await refreshAll();
+      showToast(`Stock updated for "${item.name}"`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : `Could not update stock for "${item.name}"`, "error");
     }
   }
 
@@ -360,6 +397,7 @@ export default function MenuManagementPage() {
                   <th className="py-3 pr-4">Name</th>
                   <th className="py-3 pr-4">Category</th>
                   <th className="py-3 pr-4">Price</th>
+                  <th className="py-3 pr-4">Stock</th>
                   <th className="py-3 pr-4">Status</th>
                   <th className="py-3 pr-0 text-right">Actions</th>
                 </tr>
@@ -419,6 +457,52 @@ export default function MenuManagementPage() {
                             </div>
                           ) : (
                             <span className="body-md font-semibold text-ink-primary">Rs. {item.price}</span>
+                          )}
+                        </td>
+                        <td className="py-4 pr-4">
+                          {item.trackStock ? (
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`body-md font-semibold ${
+                                  item.stockQuantity <= item.lowStockThreshold
+                                    ? "text-status-danger-ink"
+                                    : "text-ink-primary"
+                                }`}
+                              >
+                                {item.stockQuantity}
+                              </span>
+                              <Input
+                                type="number"
+                                placeholder="±"
+                                className="w-16"
+                                value={restockDrafts[item.id] ?? ""}
+                                onChange={(e) => setRestockDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
+                              />
+                              <button
+                                type="button"
+                                aria-label={`Apply stock change for ${item.name}`}
+                                onClick={() => handleRestock(item)}
+                                disabled={!restockDrafts[item.id]}
+                                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken disabled:opacity-40"
+                              >
+                                <IconCheck className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleTrackStock(item)}
+                                className="label-sm text-ink-faint underline-offset-2 hover:underline"
+                              >
+                                Stop tracking
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTrackStock(item)}
+                              className="label-sm text-ink-faint underline-offset-2 hover:text-ink-secondary hover:underline"
+                            >
+                              Not tracked · Track
+                            </button>
                           )}
                         </td>
                         <td className="py-4 pr-4">
@@ -486,7 +570,7 @@ export default function MenuManagementPage() {
                       </tr>
                       {isExpanded && (
                         <tr className="border-b border-border-subtle bg-surface-sunken">
-                          <td colSpan={5} className="px-4 py-4">
+                          <td colSpan={6} className="px-4 py-4">
                             <p className="label-sm mb-3 text-ink-faint">Modifiers for {item.name}</p>
                             {item.modifiers.length === 0 ? (
                               <p className="body-sm text-ink-faint">No modifiers for this item.</p>
@@ -595,7 +679,7 @@ export default function MenuManagementPage() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="body-md py-8 text-center text-ink-faint">
+                    <td colSpan={6} className="body-md py-8 text-center text-ink-faint">
                       {items.length === 0 ? "No menu items yet." : "No items match your search."}
                     </td>
                   </tr>

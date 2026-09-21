@@ -139,6 +139,15 @@ model MenuItem {
   isAvailable Boolean  @default(true)
   categoryId  Int
 
+  // Inventory tracking is opt-in per item (trackStock) -- most cafe menu
+  // items (drinks made to order, say) never run out in a way worth
+  // tracking, so items default to untracked rather than forcing every
+  // item to carry a meaningless stock count. stockQuantity/
+  // lowStockThreshold are only meaningful once trackStock is true.
+  trackStock        Boolean @default(false)
+  stockQuantity     Int     @default(0)
+  lowStockThreshold Int     @default(5)
+
   cafe       Cafe         @relation(fields: [cafeId], references: [id])
   category   MenuCategory @relation(fields: [categoryId], references: [id])
   modifiers  Modifier[]

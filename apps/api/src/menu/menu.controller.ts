@@ -9,6 +9,7 @@ import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { UpdateCategoryDto } from './dto/update-category.dto.js';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto.js';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
+import { AdjustStockDto } from './dto/adjust-stock.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
 import { UpdateModifierDto } from './dto/update-modifier.dto.js';
 
@@ -70,6 +71,17 @@ export class MenuController {
         @Body() dto: UpdateMenuItemDto,
     ) {
         return this.menuService.updateMenuItem(user.cafeId, id, dto);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Patch(':id/stock')
+    adjustStock(
+        @CurrentUser() user: CurrentUserPayload,
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: AdjustStockDto,
+    ) {
+        return this.menuService.adjustStock(user.cafeId, id, dto);
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)

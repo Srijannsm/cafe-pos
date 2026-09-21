@@ -108,6 +108,23 @@ export class OrdersService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // Re-check stock inside the transaction rather than trusting the
+      // `menuItem` fetched above -- that read happened before the
+      // transaction opened, so it can't be relied on to still be current
+      // if two waiters add the last few of the same item at once.
+      if (menuItem.trackStock) {
+        const current = await tx.menuItem.findUniqueOrThrow({ where: { id: menuItem.id } });
+        if (current.stockQuantity < dto.quantity) {
+          throw new BadRequestException(
+            `Only ${current.stockQuantity} of "${current.name}" left in stock`,
+          );
+        }
+        await tx.menuItem.update({
+          where: { id: menuItem.id },
+          data: { stockQuantity: { decrement: dto.quantity } },
+        });
+      }
+
       const orderItem = await tx.orderItem.create({
         data: {
           orderId,
@@ -253,6 +270,7 @@ export class OrdersService {
     async cancel(cafeId: number, orderId: number) {
   const order = await this.prisma.order.findFirst({
     where: { id: orderId, cafeId },
+    include: { orderItems: { include: { menuItem: true } } },
   });
 
   if (!order) {
@@ -266,6 +284,18 @@ export class OrdersService {
   }
 
   return this.prisma.$transaction(async (tx) => {
+    // The stock for any tracked item was already decremented when it was
+    // added (see addItem) -- a cancelled order never got made, so that
+    // stock needs to go back rather than staying lost.
+    for (const item of order.orderItems) {
+      if (item.menuItem.trackStock) {
+        await tx.menuItem.update({
+          where: { id: item.menuItemId },
+          data: { stockQuantity: { increment: item.quantity } },
+        });
+      }
+    }
+
     const cancelledOrder = await tx.order.update({
       where: { id: orderId },
       data: { status: 'cancelled' },

@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "menu_items"
+  ADD COLUMN "trackStock" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "stockQuantity" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN "lowStockThreshold" INTEGER NOT NULL DEFAULT 5;

@@ -26,6 +26,9 @@ type MenuItem = {
   price: string;
   category: { id: number; name: string };
   modifiers: Modifier[];
+  trackStock: boolean;
+  stockQuantity: number;
+  lowStockThreshold: number;
 };
 
 type OrderItem = {
@@ -108,6 +111,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   });
 
   function selectItem(item: MenuItem) {
+    if (item.trackStock && item.stockQuantity <= 0) return;
     if (selectedItemId === item.id) {
       setSelectedItemId(null);
       return;
@@ -141,8 +145,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       setSelectedItemId(null);
       await refreshOrder();
       showToast(`Added ${quantity}× ${item.name}`);
-    } catch {
-      setError("Could not add that item.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add that item.");
     } finally {
       setAdding(false);
     }
@@ -250,6 +254,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 <div className="grid grid-cols-2 items-start gap-3">
                   {itemsToShow.map((item) => {
                     const isSelected = selectedItemId === item.id;
+                    const outOfStock = item.trackStock && item.stockQuantity <= 0;
+                    const lowStock = item.trackStock && !outOfStock && item.stockQuantity <= item.lowStockThreshold;
                     const selectedPrice =
                       (Number(item.price) +
                         item.modifiers
@@ -258,14 +264,27 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                       quantity;
 
                     return (
-                      <Card key={item.id} className={isSelected ? "col-span-2" : undefined}>
+                      <Card
+                        key={item.id}
+                        className={`${isSelected ? "col-span-2" : ""} ${outOfStock ? "opacity-50" : ""}`}
+                      >
                         <button
                           onClick={() => selectItem(item)}
-                          className="flex w-full items-center justify-between gap-2 text-left"
+                          disabled={outOfStock}
+                          className="flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed"
                         >
                           <span className="body-md font-semibold text-ink-primary">{item.name}</span>
                           <span className="flex shrink-0 items-center gap-1.5">
-                            <PriceDisplay amount={item.price} />
+                            {outOfStock ? (
+                              <span className="label-sm font-semibold text-status-danger-ink">Out of stock</span>
+                            ) : (
+                              <>
+                                {lowStock && (
+                                  <span className="label-sm text-status-warning-ink">{item.stockQuantity} left</span>
+                                )}
+                                <PriceDisplay amount={item.price} />
+                              </>
+                            )}
                             <IconChevronRight
                               className={`h-4 w-4 text-ink-faint transition-transform ${isSelected ? "rotate-90" : ""}`}
                             />
@@ -309,8 +328,13 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                                 <span className="heading-sm w-6 text-center text-ink-primary">{quantity}</span>
                                 <button
                                   type="button"
-                                  onClick={() => setQuantity((q) => q + 1)}
-                                  className="flex h-10 w-10 items-center justify-center rounded-pill border border-border-strong bg-surface-raised text-ink-secondary active:scale-95"
+                                  onClick={() =>
+                                    setQuantity((q) =>
+                                      item.trackStock ? Math.min(item.stockQuantity, q + 1) : q + 1,
+                                    )
+                                  }
+                                  disabled={item.trackStock && quantity >= item.stockQuantity}
+                                  className="flex h-10 w-10 items-center justify-center rounded-pill border border-border-strong bg-surface-raised text-ink-secondary active:scale-95 disabled:opacity-40"
                                   aria-label="Increase quantity"
                                 >
                                   <IconPlus />

@@ -120,6 +120,26 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   SUPERADMIN_PASSWORD in .env via `npm run seed` (apps/api) -- there's no
   public signup, and this is internal-only, not linked from the app nav.
 
+## Inventory tracking
+- Opt-in, per menu item (MenuItem.trackStock) -- most items (drinks made
+  to order) never need a stock count, so items default to untracked
+  rather than every item carrying a meaningless number. When on,
+  stockQuantity/lowStockThreshold apply.
+- Stock decrements when a waiter adds the item to an order (addItem),
+  re-checked and applied inside the same transaction as the order item
+  itself, not from a stale read before it opened. Adding more than what's
+  left throws a 400 with how many remain. Cancelling a pending order (the
+  only status cancellation is allowed from) restores the stock it had
+  reserved, since a cancelled order was never actually made.
+- Restocking/correcting is a separate atomic endpoint (PATCH
+  /menu/:id/stock, +/- delta) rather than a read-modify-write from the
+  client, so two people adjusting the same item's stock at once don't
+  clobber each other.
+- The waiter ordering screen (/order/:id) shows "Out of stock" and blocks
+  selecting/increasing quantity past what's left, in addition to the
+  server-side check -- the server check is what actually prevents
+  overselling, the frontend one is just to avoid a wasted trip.
+
 ## Reports & analytics
 - /admin/reports (web) + ReportsModule (api, admin-only) covers revenue
   by day, top-selling menu items, and payment-method mix, over a date

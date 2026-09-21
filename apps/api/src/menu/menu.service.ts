@@ -4,6 +4,7 @@ import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { UpdateCategoryDto } from './dto/update-category.dto.js';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto.js';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
+import { AdjustStockDto } from './dto/adjust-stock.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
 import { UpdateModifierDto } from './dto/update-modifier.dto.js';
 
@@ -53,6 +54,28 @@ export class MenuService {
       await this.findCategoryOrThrow(cafeId, dto.categoryId);
     }
     return this.prisma.menuItem.update({ where: { id }, data: dto });
+  }
+
+  async adjustStock(cafeId: number, id: number, dto: AdjustStockDto) {
+    const item = await this.findMenuItemOrThrow(cafeId, id);
+
+    if (!item.trackStock) {
+      throw new BadRequestException(
+        `"${item.name}" isn't tracking stock -- turn on stock tracking before adjusting it`,
+      );
+    }
+
+    const newQuantity = item.stockQuantity + dto.delta;
+    if (newQuantity < 0) {
+      throw new BadRequestException(
+        `That would take "${item.name}" below zero (currently ${item.stockQuantity})`,
+      );
+    }
+
+    return this.prisma.menuItem.update({
+      where: { id },
+      data: { stockQuantity: newQuantity },
+    });
   }
 
   async addModifier(cafeId: number, menuItemId: number, dto: CreateModifierDto) {
