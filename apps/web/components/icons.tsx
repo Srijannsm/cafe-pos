@@ -230,3 +230,14 @@ export function IconUsers({ className = "h-4 w-4" }: IconProps) {
     </svg>
   );
 }
+
+export function IconKey({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={base} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l8.5-8.5" />
+      <path d="M16.5 6.5l2.5 2.5" />
+      <path d="M19 4l1.5 1.5" />
+    </svg>
+  );
+}

@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type CurrentUser } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
-import { IconGrid, IconClipboardList, IconTable, IconBell, IconLogout, IconClock } from "../../components/icons";
+import { IconGrid, IconClipboardList, IconTable, IconUsers, IconBell, IconLogout, IconClock } from "../../components/icons";
 import { NavItem } from "../../components/ui/NavItem";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: IconGrid },
   { href: "/admin/menu", label: "Menu Management", icon: IconClipboardList },
   { href: "/admin/tables", label: "Tables", icon: IconTable },
+  { href: "/admin/users", label: "Staff & PINs", icon: IconUsers },
 ];
 
 const FLOOR_LINKS = [
