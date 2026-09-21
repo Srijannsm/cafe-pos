@@ -195,6 +195,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   }
 
   const runningTotal = order.orderItems.reduce((sum, item) => sum + lineTotal(item), 0);
+  const allItemsReady =
+    order.orderItems.length > 0 && order.orderItems.every((item) => item.status !== "pending");
   const categories = groupByCategory(menu);
   const currentCategory = activeCategory ?? categories[0]?.[0];
   const itemsToShow = categories.find(([name]) => name === currentCategory)?.[1] ?? [];
@@ -337,7 +339,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               )}
               {order.orderItems.map((item) => (
                 <div key={item.id} className="rounded-md bg-surface-sunken p-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="body-md font-medium text-ink-primary">
                       {item.quantity}× {item.menuItem.name}
                     </span>
@@ -346,6 +348,13 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                   {item.orderItemModifiers.length > 0 && (
                     <div className="body-sm mt-1 text-ink-secondary">
                       {item.orderItemModifiers.map((oim) => oim.modifier.name).join(", ")}
+                    </div>
+                  )}
+                  {order.status === "preparing" && (
+                    <div className="mt-2">
+                      <StatusBadge tone={item.status === "pending" ? "warning" : "success"}>
+                        {item.status === "pending" ? "In the kitchen" : "Ready"}
+                      </StatusBadge>
                     </div>
                   )}
                 </div>
@@ -376,9 +385,19 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 >
                   Send to kitchen
                 </Button>
-                <Button onClick={handleServe} disabled={order.status !== "preparing"} variant="secondary" className="w-full">
+                <Button
+                  onClick={handleServe}
+                  disabled={order.status !== "preparing" || !allItemsReady}
+                  variant="secondary"
+                  className="w-full"
+                >
                   Serve
                 </Button>
+                {order.status === "preparing" && !allItemsReady && (
+                  <p className="body-sm text-center text-ink-faint">
+                    Waiting on the kitchen to mark every item ready.
+                  </p>
+                )}
 
                 {order.status === "pending" &&
                   (confirmingCancel ? (

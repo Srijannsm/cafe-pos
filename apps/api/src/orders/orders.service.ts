@@ -173,6 +173,7 @@ export class OrdersService {
     async serve(orderId: number) {
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },
+    include: { orderItems: true },
   });
 
   if (!order) {
@@ -185,9 +186,24 @@ export class OrdersService {
     );
   }
 
-  return this.prisma.order.update({
-    where: { id: orderId },
-    data: { status: 'served' },
+  const notReady = order.orderItems.filter((item) => item.status === 'pending');
+
+  if (notReady.length > 0) {
+    throw new BadRequestException(
+      `Order ${orderId} cannot be served -- ${notReady.length} item(s) are still pending in the kitchen`,
+    );
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    await tx.orderItem.updateMany({
+      where: { orderId, status: 'ready' },
+      data: { status: 'served' },
+    });
+
+    return tx.order.update({
+      where: { id: orderId },
+      data: { status: 'served' },
+    });
   });
 }
 
