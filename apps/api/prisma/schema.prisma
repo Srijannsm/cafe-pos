@@ -111,6 +111,13 @@ model RestaurantTable {
   capacity    Int
   status      TableStatus @default(free)
 
+  // Printed as a QR code -- the *token*, not the table id or tableNumber,
+  // is what grants access to /c/:slug/order/:qrToken, so a customer can't
+  // reach (or guess their way into) another table's order by trying
+  // sequential numbers. Rotatable via the admin "regenerate QR" action if
+  // a printed code is ever compromised.
+  qrToken String @unique @default(cuid())
+
   cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
 
@@ -180,11 +187,15 @@ model Order {
   total     Decimal?
   createdAt DateTime    @default(now())
   tableId   Int
-  waiterId  Int
+  // Nullable: a customer placing their own order via table QR has no
+  // waiter to attribute it to yet. Everything else about the order works
+  // exactly the same either way -- staff still confirm, cook, serve, and
+  // bill it through the normal flow.
+  waiterId  Int?
 
   cafe       Cafe            @relation(fields: [cafeId], references: [id])
   table      RestaurantTable @relation(fields: [tableId], references: [id])
-  waiter     User            @relation(fields: [waiterId], references: [id])
+  waiter     User?           @relation(fields: [waiterId], references: [id])
   orderItems OrderItem[]
   payments   Payment[]
 

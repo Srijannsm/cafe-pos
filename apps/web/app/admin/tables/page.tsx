@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetchJson } from "../../../lib/api";
 import { useToast } from "../../../components/Toast";
-import { IconTable, IconEdit, IconCheck, IconX } from "../../../components/icons";
+import { IconTable, IconEdit, IconCheck, IconX, IconQrCode } from "../../../components/icons";
 import { SectionCard } from "../_components/SectionCard";
 import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
@@ -13,6 +13,7 @@ type TableRow = {
   tableNumber: string;
   capacity: number;
   status: "free" | "occupied" | "reserved";
+  qrToken: string;
 };
 
 export default function TablesManagementPage() {
@@ -77,6 +78,30 @@ export default function TablesManagementPage() {
     }
   }
 
+  function orderingLink(table: TableRow) {
+    if (typeof window === "undefined") return "";
+    return `${window.location.origin}/order/table/${table.qrToken}`;
+  }
+
+  async function handleCopyLink(table: TableRow) {
+    try {
+      await navigator.clipboard.writeText(orderingLink(table));
+      showToast(`Ordering link for "${table.tableNumber}" copied`);
+    } catch {
+      showToast("Could not copy the link", "error");
+    }
+  }
+
+  async function handleRegenerateQr(table: TableRow) {
+    try {
+      await apiFetchJson(`/tables/${table.id}/regenerate-qr`, { method: "PATCH" });
+      await refreshAll();
+      showToast(`New ordering link generated for "${table.tableNumber}" -- the old QR code no longer works`);
+    } catch {
+      showToast(`Could not regenerate the link for "${table.tableNumber}"`, "error");
+    }
+  }
+
   const filteredTables = tables.filter((table) => table.tableNumber.toLowerCase().includes(tableSearch.toLowerCase()));
 
   return (
@@ -127,6 +152,7 @@ export default function TablesManagementPage() {
                 <tr className="label-sm border-b border-border-subtle text-ink-secondary">
                   <th className="py-3 pr-4">Table number</th>
                   <th className="py-3 pr-4">Capacity</th>
+                  <th className="py-3 pr-4">Self-order link</th>
                   <th className="py-3 pr-0 text-right">Actions</th>
                 </tr>
               </thead>
@@ -172,6 +198,26 @@ export default function TablesManagementPage() {
                         ) : (
                           <span className="body-md text-ink-secondary">{table.capacity}</span>
                         )}
+                      </td>
+                      <td className="py-4 pr-4">
+                        <div className="flex items-center gap-2">
+                          <IconQrCode className="h-4 w-4 shrink-0 text-ink-faint" />
+                          <button
+                            type="button"
+                            onClick={() => handleCopyLink(table)}
+                            className="label-sm text-brand-strong hover:underline"
+                          >
+                            Copy link
+                          </button>
+                          <span className="text-ink-faint">·</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRegenerateQr(table)}
+                            className="label-sm text-ink-secondary hover:underline"
+                          >
+                            Regenerate
+                          </button>
+                        </div>
                       </td>
                       <td className="py-4 pr-0 text-right">
                         {isEditing ? (
@@ -221,7 +267,7 @@ export default function TablesManagementPage() {
                 })}
                 {filteredTables.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="body-md py-8 text-center text-ink-faint">
+                    <td colSpan={4} className="body-md py-8 text-center text-ink-faint">
                       {tables.length === 0 ? "No tables yet." : "No tables match your search."}
                     </td>
                   </tr>

@@ -12,6 +12,7 @@ import { CafesModule } from './cafes/cafes.module.js';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module.js';
 import { PlatformAuthModule } from './platform-auth/platform-auth.module.js';
 import { ReportsModule } from './reports/reports.module.js';
+import { PublicOrderingModule } from './public-ordering/public-ordering.module.js';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ReportsModule } from './reports/reports.module.js';
     PlatformAuthModule,
     PlatformAdminModule,
     ReportsModule,
+    PublicOrderingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

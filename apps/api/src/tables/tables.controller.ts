@@ -36,4 +36,11 @@ export class TablesController {
   ) {
     return this.tablesService.updateTable(user.cafeId, id, dto);
   }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  @Patch(':id/regenerate-qr')
+  regenerateQr(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.tablesService.regenerateQr(user.cafeId, id);
+  }
 }

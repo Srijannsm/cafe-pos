@@ -153,6 +153,37 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   local night can land in the "wrong" day's bucket for a cafe far from
   UTC. Fine for now; revisit if that becomes a real complaint.
 
+## Customer self-ordering (QR)
+- Each RestaurantTable has a qrToken (unique, cuid, unrelated to the
+  human-readable tableNumber) -- that token is the only "credential" the
+  public ordering flow needs, so the URL itself is the access control.
+  Regenerating it (PATCH /tables/:id/regenerate-qr, admin-only) invalidates
+  the old link outright rather than layering on a second valid one, so a
+  reprinted or suspected-leaked QR code actually stops working.
+- PublicOrderingModule (api) is a fully unauthenticated module
+  (GET/POST /public/tables/:qrToken...) that reuses OrdersService.addItem
+  and .findOne rather than re-implementing stock checks, price snapshotting,
+  or modifier handling -- a customer's line item goes through exactly the
+  same path a waiter's does.
+- "Staff must confirm before the kitchen sees it" needed no new state
+  machine: a self-placed order lands as 'pending' like any other new order,
+  and only an authenticated staff member calling sendToKitchen moves it to
+  'preparing'. addItem itself never forwards to the kitchen (it only
+  reopens an already-served order back to preparing on a later round), so
+  nothing a customer submits reaches the kitchen board unconfirmed.
+- Scanning again at an occupied table joins the existing active order
+  (status not in paid/cancelled) instead of starting a competing one --
+  same "what counts as active" definition the tables floor view already
+  uses. A fresh order only starts if the table is currently free.
+- /order/table/:qrToken (web) is the public page -- no NavBar, no auth,
+  built as a standalone cart-then-submit flow (select items locally, submit
+  the whole batch in one POST) rather than the waiter screen's
+  add-one-at-a-time pattern, since a customer doesn't have a live
+  order to append to until their first submission creates one.
+- /admin/tables lists each table's ordering link (copy + regenerate) but
+  does not render an actual QR image yet -- first cut ships the raw link
+  only; a real `qrcode`-rendered/printable code is a known follow-up.
+
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and
   AuthService (cafe-aware PIN login) have real unit tests against a mocked

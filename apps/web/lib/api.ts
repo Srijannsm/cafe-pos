@@ -110,6 +110,27 @@ export async function platformLogin(username: string, password: string): Promise
   return result.user;
 }
 
+
+// The public self-ordering flow has no session at all -- the qrToken in
+// the URL path is the only credential -- so this never attaches a token
+// and never redirects on 401. A bad or expired link should just show an
+// error on the page the customer is already looking at.
+export async function publicFetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, options);
+
+  if (!res.ok) {
+    const serverMessage = await res
+      .json()
+      .then((body: { message?: string | string[] }) =>
+        typeof body?.message === "string" ? body.message : Array.isArray(body?.message) ? body.message.join(", ") : null,
+      )
+      .catch(() => null);
+    throw new Error(serverMessage ?? `Request failed: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
 export async function platformFetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getPlatformToken();
   const headers = new Headers(options.headers);
