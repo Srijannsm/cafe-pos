@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetchJson, getCurrentUser } from "../lib/api";
 import { useRequireAuth } from "../lib/useRequireAuth";
@@ -45,13 +45,16 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("All");
 
+  const loadTables = useCallback(() => {
+    return apiFetchJson<Table[]>("/tables").then(setTables);
+  }, []);
+
   useEffect(() => {
     if (!ready) return;
-
-    apiFetchJson<Table[]>("/tables")
-      .then(setTables)
-      .finally(() => setLoading(false));
-  }, [ready]);
+    loadTables().finally(() => setLoading(false));
+    const interval = setInterval(loadTables, 5000);
+    return () => clearInterval(interval);
+  }, [ready, loadTables]);
 
   async function handleTableClick(table: Table) {
     const user = getCurrentUser();
