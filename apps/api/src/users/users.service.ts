@@ -15,38 +15,36 @@ const ADMIN_SAFE_SELECT = {
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  findAllForLogin() {
+  findAllForAdmin(cafeId: number) {
     return this.prisma.user.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true, role: true },
-    });
-  }
-
-  findAllForAdmin() {
-    return this.prisma.user.findMany({
+      where: { cafeId },
       select: ADMIN_SAFE_SELECT,
       orderBy: { name: 'asc' },
     });
   }
 
-  async create(dto: CreateUserDto) {
-    const existing = await this.prisma.user.findUnique({ where: { name: dto.name } });
+  async create(cafeId: number, dto: CreateUserDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { cafeId_name: { cafeId, name: dto.name } },
+    });
     if (existing) {
       throw new BadRequestException(`A staff member named "${dto.name}" already exists`);
     }
 
     const pinHash = await bcrypt.hash(dto.pin, 10);
     return this.prisma.user.create({
-      data: { name: dto.name, role: dto.role, pinHash },
+      data: { name: dto.name, role: dto.role, pinHash, cafeId },
       select: ADMIN_SAFE_SELECT,
     });
   }
 
-  async update(id: number, dto: UpdateUserDto) {
-    await this.findOrThrow(id);
+  async update(cafeId: number, id: number, dto: UpdateUserDto) {
+    await this.findOrThrow(cafeId, id);
 
     if (dto.name) {
-      const clash = await this.prisma.user.findUnique({ where: { name: dto.name } });
+      const clash = await this.prisma.user.findUnique({
+        where: { cafeId_name: { cafeId, name: dto.name } },
+      });
       if (clash && clash.id !== id) {
         throw new BadRequestException(`A staff member named "${dto.name}" already exists`);
       }
@@ -66,8 +64,8 @@ export class UsersService {
     });
   }
 
-  private async findOrThrow(id: number) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  private async findOrThrow(cafeId: number, id: number) {
+    const user = await this.prisma.user.findFirst({ where: { id, cafeId } });
     if (!user) {
       throw new NotFoundException(`User ${id} does not exist`);
     }

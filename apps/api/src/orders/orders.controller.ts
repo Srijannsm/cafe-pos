@@ -6,6 +6,8 @@ import { RecordPaymentDto } from './dto/record-payment.dto.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
+import { CurrentUser } from '../auth/current-user.decorator.js';
+import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
 import { OrderStatus } from '../generated/prisma/client.js';
 
 @Controller('orders')
@@ -14,77 +16,85 @@ export class OrdersController {
 
   @UseGuards(JwtAuthGuard)
   @Get()
-  findAll(@Query('status') status?: OrderStatus) {
-    return this.ordersService.findAll(status);
+  findAll(@CurrentUser() user: CurrentUserPayload, @Query('status') status?: OrderStatus) {
+    return this.ordersService.findAll(user.cafeId, status);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Post()
-  create(@Body() dto: CreateOrderDto) {
-    return this.ordersService.create(dto);
+  create(@CurrentUser() user: CurrentUserPayload, @Body() dto: CreateOrderDto) {
+    return this.ordersService.create(user.cafeId, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Post(':orderId/items')
-  addItem(@Param('orderId', ParseIntPipe) orderId: number, @Body() dto: AddOrderDto) {
-    return this.ordersService.addItem(orderId, dto);
+  addItem(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: AddOrderDto,
+  ) {
+    return this.ordersService.addItem(user.cafeId, orderId, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Patch(':orderId/send-to-kitchen')
-  sendToKitchen(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.ordersService.sendToKitchen(orderId);
+  sendToKitchen(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.sendToKitchen(user.cafeId, orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Patch('items/:orderItemId/ready')
-  markItemReady(@Param('orderItemId', ParseIntPipe) orderItemId: number) {
-    return this.ordersService.markItemReady(orderItemId);
+  markItemReady(@CurrentUser() user: CurrentUserPayload, @Param('orderItemId', ParseIntPipe) orderItemId: number) {
+    return this.ordersService.markItemReady(user.cafeId, orderItemId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Patch(':orderId/serve')
-  serve(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.ordersService.serve(orderId);
+  serve(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.serve(user.cafeId, orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin')
   @Patch(':orderId/cancel')
-  cancel(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.ordersService.cancel(orderId);
+  cancel(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.cancel(user.cafeId, orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin', 'cashier')
   @Patch(':orderId/bill')
-  generateBill(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.ordersService.generateBill(orderId);
+  generateBill(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.generateBill(user.cafeId, orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('waiter', 'admin', 'cashier')
   @Patch(':orderId/reopen')
-  reopen(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.ordersService.reopenToServed(orderId);
+  reopen(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+    return this.ordersService.reopenToServed(user.cafeId, orderId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin', 'cashier')
   @Patch(':orderId/pay')
-  recordPayment(@Param('orderId', ParseIntPipe) orderId: number, @Body() dto: RecordPaymentDto) {
-    return this.ordersService.recordPayment(orderId, dto);
+  recordPayment(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: RecordPaymentDto,
+  ) {
+    return this.ordersService.recordPayment(user.cafeId, orderId, dto);
   }
 
   @UseGuards(JwtAuthGuard)
 @Get(':orderId')
-findOne(@Param('orderId', ParseIntPipe) orderId: number) {
-  return this.ordersService.findOne(orderId);
+findOne(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
+  return this.ordersService.findOne(user.cafeId, orderId);
 }
 
 }

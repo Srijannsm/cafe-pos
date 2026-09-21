@@ -7,13 +7,14 @@ import { UpdateTableDto } from './dto/update-table.dto.js';
 export class TablesService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
+  async findAll(cafeId: number) {
     const tables = await this.prisma.restaurantTable.findMany({
+      where: { cafeId },
       orderBy: { tableNumber: 'asc' },
     });
 
     const activeOrders = await this.prisma.order.findMany({
-      where: { status: { notIn: ['paid', 'cancelled'] } },
+      where: { cafeId, status: { notIn: ['paid', 'cancelled'] } },
       select: { id: true, tableId: true, status: true },
     });
 
@@ -27,12 +28,15 @@ export class TablesService {
     });
   }
 
-  createTable(dto: CreateTableDto) {
-    return this.prisma.restaurantTable.create({ data: dto });
+  createTable(cafeId: number, dto: CreateTableDto) {
+    return this.prisma.restaurantTable.create({ data: { ...dto, cafeId } });
   }
 
-  async updateTable(id: number, dto: UpdateTableDto) {
-    const table = await this.prisma.restaurantTable.findUnique({ where: { id } });
+  async updateTable(cafeId: number, id: number, dto: UpdateTableDto) {
+    // Scoping the lookup itself (not just checking afterwards) is what
+    // stops staff at one cafe from updating -- or even learning the
+    // existence of -- a table id that belongs to a different cafe.
+    const table = await this.prisma.restaurantTable.findFirst({ where: { id, cafeId } });
     if (!table) {
       throw new NotFoundException(`Table ${id} does not exist`);
     }

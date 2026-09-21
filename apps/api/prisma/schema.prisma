@@ -53,50 +53,85 @@ enum PaymentMethod {
   fonepay_qr
 }
 
+// The tenant. Every cafe running on this deployment gets one row here, and
+// (almost) every other model hangs off a cafeId so one cafe's data is never
+// visible to another. `slug` is what identifies a cafe in the URL
+// (/c/:slug/login) since staff log in with a 4-digit PIN, not an email --
+// the slug is how the app knows *which* cafe's staff list to show.
+model Cafe {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users          User[]
+  tables         RestaurantTable[]
+  menuCategories MenuCategory[]
+  menuItems      MenuItem[]
+  orders         Order[]
+
+  @@map("cafes")
+}
+
 model User {
   id       Int     @id @default(autoincrement())
-  name     String  @unique
+  cafeId   Int
+  name     String
   pinHash  String
   role     Role
   isActive Boolean @default(true)
 
+  cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
 
+  // A name only has to be unique within its own cafe -- "Sita" can work at
+  // two different cafes on the same platform.
+  @@unique([cafeId, name])
   @@map("users")
 }
 
 model RestaurantTable {
   id          Int         @id @default(autoincrement())
+  cafeId      Int
   tableNumber String
   capacity    Int
   status      TableStatus @default(free)
 
+  cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
 
+  @@unique([cafeId, tableNumber])
   @@map("restaurant_tables")
 }
 
 model MenuCategory {
   id        Int    @id @default(autoincrement())
-  name      String @unique
+  cafeId    Int
+  name      String
   sortOrder Int
 
+  cafe      Cafe       @relation(fields: [cafeId], references: [id])
   menuItems MenuItem[]
 
+  @@unique([cafeId, name])
   @@map("menu_categories")
 }
 
 model MenuItem {
   id          Int      @id @default(autoincrement())
-  name        String   @unique
+  cafeId      Int
+  name        String
   price       Decimal
   isAvailable Boolean  @default(true)
   categoryId  Int
 
+  cafe       Cafe         @relation(fields: [cafeId], references: [id])
   category   MenuCategory @relation(fields: [categoryId], references: [id])
   modifiers  Modifier[]
   orderItems OrderItem[]
 
+  @@unique([cafeId, name])
   @@map("menu_items")
 }
 
@@ -106,6 +141,9 @@ model Modifier {
   priceDelta Decimal
   menuItemId Int
 
+  // Scoped to its cafe transitively through menuItem -- a modifier never
+  // needs to be looked up on its own without its parent item, so a direct
+  // cafeId here would just be a redundant column to keep in sync.
   menuItem           MenuItem            @relation(fields: [menuItemId], references: [id])
   orderItemModifiers OrderItemModifier[]
 
@@ -114,6 +152,7 @@ model Modifier {
 
 model Order {
   id        Int         @id @default(autoincrement())
+  cafeId    Int
   orderType OrderType
   status    OrderStatus @default(pending)
   total     Decimal?
@@ -121,6 +160,7 @@ model Order {
   tableId   Int
   waiterId  Int
 
+  cafe       Cafe            @relation(fields: [cafeId], references: [id])
   table      RestaurantTable @relation(fields: [tableId], references: [id])
   waiter     User            @relation(fields: [waiterId], references: [id])
   orderItems OrderItem[]
@@ -137,6 +177,7 @@ model OrderItem {
   orderId    Int
   menuItemId Int
 
+  // Scoped transitively through order, same reasoning as Modifier above.
   order              Order               @relation(fields: [orderId], references: [id])
   menuItem           MenuItem            @relation(fields: [menuItemId], references: [id])
   orderItemModifiers OrderItemModifier[]
@@ -163,6 +204,7 @@ model Payment {
   paidAt  DateTime      @default(now())
   orderId Int
 
+  // Scoped transitively through order, same reasoning as Modifier above.
   order Order @relation(fields: [orderId], references: [id])
 
   @@map("payments")

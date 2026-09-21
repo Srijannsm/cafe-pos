@@ -16,10 +16,11 @@ export type OrderItemReadyEvent = {
   orderItemId: number;
 };
 
-// Broadcasts order-lifecycle events to every connected client (Kitchen Display,
-// waiter order screens). No rooms/namespaces -- a single cafe has a handful of
-// concurrent clients, so a plain broadcast is simpler than per-table channels
-// and cheap enough to leave that way until it's actually a problem.
+// Broadcasts order-lifecycle events to every connected client *of the same
+// cafe* (Kitchen Display, waiter order screens) via a per-cafe Socket.IO
+// room. This used to be a plain server.emit() with no rooms -- fine for a
+// single cafe, but once a second tenant is on this deployment that would
+// leak one cafe's kitchen/order events to every other cafe's screens.
 @WebSocketGateway({
   cors: { origin: 'http://localhost:3000', credentials: true },
 })
@@ -33,7 +34,9 @@ export class OrdersGateway implements OnGatewayConnection {
 
   // Same JWT_SECRET as the REST API (JwtService is configured once, in
   // AuthModule, and reused here) -- an unauthenticated or stale token gets
-  // disconnected immediately rather than left listening.
+  // disconnected immediately rather than left listening. The verified
+  // token's cafeId also decides which room this socket joins, so a client
+  // can never end up listening to another cafe's events.
   handleConnection(client: Socket) {
     const token = client.handshake.auth?.token as string | undefined;
 
@@ -44,18 +47,23 @@ export class OrdersGateway implements OnGatewayConnection {
     }
 
     try {
-      this.jwtService.verify(token);
+      const payload = this.jwtService.verify<{ cafeId: number }>(token);
+      client.join(cafeRoom(payload.cafeId));
     } catch {
       this.logger.warn(`Socket ${client.id} sent an invalid/expired token`);
       client.disconnect(true);
     }
   }
 
-  emitOrderSentToKitchen(payload: OrderSentToKitchenEvent) {
-    this.server.emit('order.sentToKitchen', payload);
+  emitOrderSentToKitchen(cafeId: number, payload: OrderSentToKitchenEvent) {
+    this.server.to(cafeRoom(cafeId)).emit('order.sentToKitchen', payload);
   }
 
-  emitOrderItemReady(payload: OrderItemReadyEvent) {
-    this.server.emit('order.itemReady', payload);
+  emitOrderItemReady(cafeId: number, payload: OrderItemReadyEvent) {
+    this.server.to(cafeRoom(cafeId)).emit('order.itemReady', payload);
   }
+}
+
+function cafeRoom(cafeId: number) {
+  return `cafe:${cafeId}`;
 }

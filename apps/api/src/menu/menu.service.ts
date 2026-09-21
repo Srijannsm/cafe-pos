@@ -11,55 +11,62 @@ import { UpdateModifierDto } from './dto/update-modifier.dto.js';
 export class MenuService {
   constructor(private prisma: PrismaService) {}
 
-  findAll() {
+  findAll(cafeId: number) {
     return this.prisma.menuItem.findMany({
-      where: { isAvailable: true },
+      where: { cafeId, isAvailable: true },
       include: { category: true, modifiers: true },
       orderBy: { category: { sortOrder: 'asc' } },
     });
   }
 
-  findAllForAdmin() {
+  findAllForAdmin(cafeId: number) {
     return this.prisma.menuItem.findMany({
+      where: { cafeId },
       include: { category: true, modifiers: true },
       orderBy: { category: { sortOrder: 'asc' } },
     });
   }
 
-  findAllCategories() {
-    return this.prisma.menuCategory.findMany({ orderBy: { sortOrder: 'asc' } });
+  findAllCategories(cafeId: number) {
+    return this.prisma.menuCategory.findMany({ where: { cafeId }, orderBy: { sortOrder: 'asc' } });
   }
 
-  createCategory(dto: CreateCategoryDto) {
-    return this.prisma.menuCategory.create({ data: dto });
+  createCategory(cafeId: number, dto: CreateCategoryDto) {
+    return this.prisma.menuCategory.create({ data: { ...dto, cafeId } });
   }
 
-  async updateCategory(id: number, dto: UpdateCategoryDto) {
-    await this.findCategoryOrThrow(id);
+  async updateCategory(cafeId: number, id: number, dto: UpdateCategoryDto) {
+    await this.findCategoryOrThrow(cafeId, id);
     return this.prisma.menuCategory.update({ where: { id }, data: dto });
   }
 
-  createMenuItem(dto: CreateMenuItemDto) {
-    return this.prisma.menuItem.create({ data: dto });
+  async createMenuItem(cafeId: number, dto: CreateMenuItemDto) {
+    // The category has to belong to the same cafe as the item, or a menu
+    // item could end up filed under another cafe's category.
+    await this.findCategoryOrThrow(cafeId, dto.categoryId);
+    return this.prisma.menuItem.create({ data: { ...dto, cafeId } });
   }
 
-  async updateMenuItem(id: number, dto: UpdateMenuItemDto) {
-    await this.findMenuItemOrThrow(id);
+  async updateMenuItem(cafeId: number, id: number, dto: UpdateMenuItemDto) {
+    await this.findMenuItemOrThrow(cafeId, id);
+    if (dto.categoryId) {
+      await this.findCategoryOrThrow(cafeId, dto.categoryId);
+    }
     return this.prisma.menuItem.update({ where: { id }, data: dto });
   }
 
-  async addModifier(menuItemId: number, dto: CreateModifierDto) {
-    await this.findMenuItemOrThrow(menuItemId);
+  async addModifier(cafeId: number, menuItemId: number, dto: CreateModifierDto) {
+    await this.findMenuItemOrThrow(cafeId, menuItemId);
     return this.prisma.modifier.create({ data: { ...dto, menuItemId } });
   }
 
-  async updateModifier(id: number, dto: UpdateModifierDto) {
-    await this.findModifierOrThrow(id);
+  async updateModifier(cafeId: number, id: number, dto: UpdateModifierDto) {
+    await this.findModifierOrThrow(cafeId, id);
     return this.prisma.modifier.update({ where: { id }, data: dto });
   }
 
-  async removeModifier(id: number) {
-    await this.findModifierOrThrow(id);
+  async removeModifier(cafeId: number, id: number) {
+    await this.findModifierOrThrow(cafeId, id);
     const usageCount = await this.prisma.orderItemModifier.count({ where: { modifierId: id } });
     if (usageCount > 0) {
       throw new BadRequestException(
@@ -69,24 +76,30 @@ export class MenuService {
     return this.prisma.modifier.delete({ where: { id } });
   }
 
-  private async findModifierOrThrow(id: number) {
-    const modifier = await this.prisma.modifier.findUnique({ where: { id } });
+  // Modifiers and menu items don't carry cafeId directly (see schema
+  // comments), so scoping them means joining up to the cafe-owned parent --
+  // findFirst with a nested where is how Prisma expresses "this child row,
+  // but only if its parent belongs to this cafe."
+  private async findModifierOrThrow(cafeId: number, id: number) {
+    const modifier = await this.prisma.modifier.findFirst({
+      where: { id, menuItem: { cafeId } },
+    });
     if (!modifier) {
       throw new NotFoundException(`Modifier ${id} does not exist`);
     }
     return modifier;
   }
 
-  private async findMenuItemOrThrow(id: number) {
-    const item = await this.prisma.menuItem.findUnique({ where: { id } });
+  private async findMenuItemOrThrow(cafeId: number, id: number) {
+    const item = await this.prisma.menuItem.findFirst({ where: { id, cafeId } });
     if (!item) {
       throw new NotFoundException(`Menu item ${id} does not exist`);
     }
     return item;
   }
 
-  private async findCategoryOrThrow(id: number) {
-    const category = await this.prisma.menuCategory.findUnique({ where: { id } });
+  private async findCategoryOrThrow(cafeId: number, id: number) {
+    const category = await this.prisma.menuCategory.findFirst({ where: { id, cafeId } });
     if (!category) {
       throw new NotFoundException(`Menu category ${id} does not exist`);
     }

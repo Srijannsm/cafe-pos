@@ -8,6 +8,7 @@ import { OrdersModule } from './orders/orders.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { TablesModule } from './tables/tables.module.js';
+import { CafesModule } from './cafes/cafes.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { TablesModule } from './tables/tables.module.js';
     AuthModule,
     UsersModule,
     TablesModule,
+    CafesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

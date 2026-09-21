@@ -4,23 +4,39 @@ import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-async function main() {
-  const beverages = await prisma.menuCategory.upsert({
-    where: { name: 'Beverages' },
+// Onboards one cafe end-to-end: creates the Cafe row, its menu, and its
+// staff. This is the closest thing to a "create cafe" flow that exists
+// right now -- there's no self-serve signup yet, so a new tenant gets
+// added by calling this once with that cafe's details (see main() below).
+async function seedCafe(opts: {
+  slug: string;
+  name: string;
+  adminPin: string;
+  cashierPin: string;
+}) {
+  const cafe = await prisma.cafe.upsert({
+    where: { slug: opts.slug },
     update: {},
-    create: { name: 'Beverages', sortOrder: 1 },
+    create: { slug: opts.slug, name: opts.name },
+  });
+
+  const beverages = await prisma.menuCategory.upsert({
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Beverages' } },
+    update: {},
+    create: { cafeId: cafe.id, name: 'Beverages', sortOrder: 1 },
   });
 
   const snacks = await prisma.menuCategory.upsert({
-    where: { name: 'Snacks' },
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Snacks' } },
     update: {},
-    create: { name: 'Snacks', sortOrder: 2 },
+    create: { cafeId: cafe.id, name: 'Snacks', sortOrder: 2 },
   });
 
   await prisma.menuItem.upsert({
-    where: { name: 'Americano' },
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Americano' } },
     update: {},
     create: {
+      cafeId: cafe.id,
       name: 'Americano',
       price: 150,
       categoryId: beverages.id,
@@ -34,32 +50,43 @@ async function main() {
   });
 
   await prisma.menuItem.upsert({
-    where: { name: 'Mo:Mo' },
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Mo:Mo' } },
     update: {},
-    create: { name: 'Mo:Mo', price: 120, categoryId: snacks.id },
+    create: { cafeId: cafe.id, name: 'Mo:Mo', price: 120, categoryId: snacks.id },
   });
 
   await prisma.menuItem.upsert({
-    where: { name: 'Carrot Cake' },
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Carrot Cake' } },
     update: {},
-    create: { name: 'Carrot Cake', price: 150, categoryId: snacks.id },
+    create: { cafeId: cafe.id, name: 'Carrot Cake', price: 150, categoryId: snacks.id },
   });
 
-  const cashierPinHash = await bcrypt.hash('5678', 10);
+  const cashierPinHash = await bcrypt.hash(opts.cashierPin, 10);
   await prisma.user.upsert({
-    where: { name: 'Sita' },
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Sita' } },
     update: {},
-    create: { name: 'Sita', pinHash: cashierPinHash, role: 'cashier' },
+    create: { cafeId: cafe.id, name: 'Sita', pinHash: cashierPinHash, role: 'cashier' },
   });
 
-  const adminPinHash = await bcrypt.hash('9999', 10);
-await prisma.user.upsert({
-  where: { name: 'Admin' },
-  update: {},
-  create: { name: 'Admin', pinHash: adminPinHash, role: 'admin' },
-});
+  const adminPinHash = await bcrypt.hash(opts.adminPin, 10);
+  await prisma.user.upsert({
+    where: { cafeId_name: { cafeId: cafe.id, name: 'Admin' } },
+    update: {},
+    create: { cafeId: cafe.id, name: 'Admin', pinHash: adminPinHash, role: 'admin' },
+  });
 
-  console.log('Seed data is up to date.');
+  return cafe;
+}
+
+async function main() {
+  const cafe = await seedCafe({
+    slug: 'mittho-cafe',
+    name: 'Mittho Cafe',
+    adminPin: '9999',
+    cashierPin: '5678',
+  });
+
+  console.log(`Seed data is up to date. Log in at /c/${cafe.slug}/login`);
 }
 
 main()

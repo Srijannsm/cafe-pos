@@ -13,9 +13,9 @@ export class OrdersService {
     private ordersGateway: OrdersGateway,
   ) {}
 
-  async findAll(status?: OrderStatus) {
+  async findAll(cafeId: number, status?: OrderStatus) {
     return this.prisma.order.findMany({
-      where: status ? { status } : undefined,
+      where: { cafeId, ...(status ? { status } : {}) },
       include: {
         orderItems: {
           include: {
@@ -30,9 +30,9 @@ export class OrdersService {
     });
   }
 
-  async create(dto: CreateOrderDto) {
-    const table = await this.prisma.restaurantTable.findUnique({
-      where: { id: dto.tableId },
+  async create(cafeId: number, dto: CreateOrderDto) {
+    const table = await this.prisma.restaurantTable.findFirst({
+      where: { id: dto.tableId, cafeId },
     });
 
     if (!table) {
@@ -43,9 +43,22 @@ export class OrdersService {
       throw new BadRequestException(`Table ${dto.tableId} is not free`);
     }
 
+    // A waiter id from another cafe should never be assignable here --
+    // without this check a valid-looking id from a different tenant would
+    // otherwise pass Prisma's FK check (the users table has no cafe
+    // concept baked into the FK itself) and silently attach cross-tenant.
+    const waiter = await this.prisma.user.findFirst({
+      where: { id: dto.waiterId, cafeId },
+    });
+
+    if (!waiter) {
+      throw new NotFoundException(`Waiter ${dto.waiterId} does not exist`);
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
+          cafeId,
           tableId: dto.tableId,
           waiterId: dto.waiterId,
           orderType: dto.orderType,
@@ -71,9 +84,9 @@ export class OrdersService {
     'served',
   ];
 
-  async addItem(orderId: number, dto: AddOrderDto) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+  async addItem(cafeId: number, orderId: number, dto: AddOrderDto) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
     });
 
     if (!order) {
@@ -86,8 +99,8 @@ export class OrdersService {
       );
     }
 
-    const menuItem = await this.prisma.menuItem.findUnique({
-      where: { id: dto.menuItemId },
+    const menuItem = await this.prisma.menuItem.findFirst({
+      where: { id: dto.menuItemId, cafeId },
     });
 
     if (!menuItem) {
@@ -131,15 +144,15 @@ export class OrdersService {
     });
 
     if (order.status === 'served') {
-      this.ordersGateway.emitOrderSentToKitchen({ orderId });
+      this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId });
     }
 
     return result;
   }
 
-  async sendToKitchen(orderId: number) {
-  const order = await this.prisma.order.findUnique({
-    where: { id: orderId },
+  async sendToKitchen(cafeId: number, orderId: number) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, cafeId },
     include: { orderItems: true },
   });
 
@@ -164,14 +177,17 @@ export class OrdersService {
     data: { status: 'preparing' },
   });
 
-  this.ordersGateway.emitOrderSentToKitchen({ orderId: updated.id });
+  this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.id });
 
   return updated;
 }
 
-    async markItemReady(orderItemId: number) {
-    const orderItem = await this.prisma.orderItem.findUnique({
-    where: { id: orderItemId },
+    async markItemReady(cafeId: number, orderItemId: number) {
+    // OrderItem has no cafeId of its own (scoped transitively through its
+    // order), so the lookup joins up to order to enforce the tenant
+    // boundary -- see the schema comments on OrderItem/Payment/Modifier.
+    const orderItem = await this.prisma.orderItem.findFirst({
+    where: { id: orderItemId, order: { cafeId } },
   });
 
   if (!orderItem) {
@@ -189,7 +205,7 @@ export class OrdersService {
     data: { status: 'ready' },
   });
 
-  this.ordersGateway.emitOrderItemReady({
+  this.ordersGateway.emitOrderItemReady(cafeId, {
     orderId: updated.orderId,
     orderItemId: updated.id,
   });
@@ -197,9 +213,9 @@ export class OrdersService {
   return updated;
 }
 
-    async serve(orderId: number) {
-  const order = await this.prisma.order.findUnique({
-    where: { id: orderId },
+    async serve(cafeId: number, orderId: number) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, cafeId },
     include: { orderItems: true },
   });
 
@@ -234,9 +250,9 @@ export class OrdersService {
   });
 }
 
-    async cancel(orderId: number) {
-  const order = await this.prisma.order.findUnique({
-    where: { id: orderId },
+    async cancel(cafeId: number, orderId: number) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, cafeId },
   });
 
   if (!order) {
@@ -264,9 +280,9 @@ export class OrdersService {
   });
 }
 
-  async generateBill(orderId: number) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+  async generateBill(cafeId: number, orderId: number) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
       include: {
         orderItems: {
           include: {
@@ -311,9 +327,9 @@ export class OrdersService {
   // something new is added, or straight back to Serve if the waiter just
   // mis-clicked. The total is cleared rather than left stale, since it was
   // only ever correct for the item set at the moment it was billed.
-  async reopenToServed(orderId: number) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+  async reopenToServed(cafeId: number, orderId: number) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
     });
 
     if (!order) {
@@ -332,9 +348,9 @@ export class OrdersService {
     });
   }
 
-  async recordPayment(orderId: number, dto: RecordPaymentDto) {
-  const order = await this.prisma.order.findUnique({
-    where: { id: orderId },
+  async recordPayment(cafeId: number, orderId: number, dto: RecordPaymentDto) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, cafeId },
   });
 
   if (!order) {
@@ -370,9 +386,9 @@ export class OrdersService {
   });
 }
 
-  async findOne(orderId: number) {
-  const order = await this.prisma.order.findUnique({
-    where: { id: orderId },
+  async findOne(cafeId: number, orderId: number) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, cafeId },
     include: {
       orderItems: {
         include: {
