@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { TablesModule } from './tables/tables.module.js';
 import { CafesModule } from './cafes/cafes.module.js';
+import { PlatformAdminModule } from './platform-admin/platform-admin.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { CafesModule } from './cafes/cafes.module.js';
     UsersModule,
     TablesModule,
     CafesModule,
+    PlatformAdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

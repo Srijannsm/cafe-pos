@@ -65,3 +65,41 @@ export function logout() {
   localStorage.removeItem("accessToken");
   localStorage.removeItem("currentUser");
 }
+
+// Separate from the staff PIN-login auth above: the internal cafe-onboarding
+// tool (apps/web/app/platform) authenticates with a single shared secret
+// instead, since it's used before any cafe (or its admin user) exists.
+const PLATFORM_SECRET_KEY = "platformSecret";
+
+export function getPlatformSecret(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(PLATFORM_SECRET_KEY);
+}
+
+export function setPlatformSecret(secret: string) {
+  localStorage.setItem(PLATFORM_SECRET_KEY, secret);
+}
+
+export function clearPlatformSecret() {
+  localStorage.removeItem(PLATFORM_SECRET_KEY);
+}
+
+export async function platformFetchJson<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+  const secret = getPlatformSecret();
+  const headers = new Headers(options.headers);
+  if (secret) headers.set("x-platform-secret", secret);
+
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+
+  if (!res.ok) {
+    const serverMessage = await res
+      .json()
+      .then((body: { message?: string | string[] }) =>
+        typeof body?.message === "string" ? body.message : Array.isArray(body?.message) ? body.message.join(", ") : null,
+      )
+      .catch(() => null);
+    throw new Error(serverMessage ?? `Request failed: ${res.status} ${res.statusText}`);
+  }
+
+  return res.json() as Promise<T>;
+}
