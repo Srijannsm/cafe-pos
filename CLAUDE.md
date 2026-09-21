@@ -1,9 +1,11 @@
 # Cafe POS System — Project Context
 
 ## What this is
-A cafe/restaurant POS system being built for a real client in Nepal, with a waiter
-ordering app as a core requirement. Long-term goal: turn this into a multi-tenant
-SaaS product after the first client's system is stable.
+A multi-tenant cafe/restaurant POS SaaS, with a waiter ordering app as a core
+feature. Started as a build for a single client (Mittho Cafe, in Nepal); that
+engagement ended before launch, so the project pivoted to v2: building it out
+as a proper multi-tenant product rather than shipping a single-client MVP.
+Mittho Cafe's data now lives in the system as the first (test) tenant.
 
 ## Tech stack
 - Backend: NestJS (TypeScript), monorepo managed with Turborepo + npm workspaces
@@ -15,8 +17,32 @@ SaaS product after the first client's system is stable.
   React Native still planned for v2 if Bluetooth printing is needed.
 - Real-time sync: Socket.io via NestJS WebSocket Gateway (`OrdersGateway`) --
   built for the kitchen<->waiter relation only: `order.sentToKitchen` and
-  `order.itemReady`, broadcast to all connected clients (no rooms). Tables
-  floor view and Billing still rely on plain polling, not sockets.
+  `order.itemReady`. Emits are scoped per-cafe via Socket.IO rooms (`cafe:<id>`,
+  joined on connect using the cafeId out of the verified JWT) so one cafe never
+  sees another's kitchen/waiter events. Tables floor view and Billing still
+  rely on plain polling, not sockets.
+
+## Multi-tenancy (v2)
+- Every cafe running on the platform gets one `Cafe` row (id, name, slug,
+  isActive). `User`, `RestaurantTable`, `MenuCategory`, `MenuItem`, and `Order`
+  each carry a direct `cafeId` FK and are scoped by it on every query.
+  `Modifier`, `OrderItem`, `OrderItemModifier`, and `Payment` deliberately do
+  NOT get a redundant direct `cafeId` — they're always reached through a
+  parent (menuItem/order), so they're scoped transitively via a nested-relation
+  `findFirst({ where: { id, <parent>: { cafeId } } })` instead.
+- Cafes are identified by a URL slug, not a subdomain: staff log in at
+  `/c/:slug/login`. This was chosen over subdomain-per-cafe or a cafe-picker
+  screen to avoid wildcard DNS/SSL work until there are paying customers.
+- The JWT (not the URL) carries `cafeId` for every authenticated request after
+  login — a custom `@CurrentUser()` param decorator reads it server-side off
+  the verified token, so a controller never trusts a client-supplied cafeId.
+  This is also why only the login flow needed to move under `/c/[slug]/...`;
+  every other route (`/`, `/kitchen`, `/order/[id]`, `/billing`, `/admin/*`)
+  was left where it was.
+- Uniqueness that used to be global is now scoped per-cafe: e.g. a staff
+  member's name, a menu item's name, and a table's number only have to be
+  unique within their own cafe (`@@unique([cafeId, name])` etc.), so two
+  different cafes can each have their own "Sita" or their own "Table 4".
 
 ## Monorepo structure
 - apps/api      → NestJS backend (port 4000)
@@ -24,15 +50,18 @@ SaaS product after the first client's system is stable.
 - packages/     → shared TypeScript types (not yet populated)
 
 ## Key business decisions (do not change without asking)
-- Client is NOT VAT registered — do not add VAT calculation to billing logic
-- Payments are informal QR (client shows their own eSewa/Khalti/FonePay QR code) —
+- No cafe on the platform is assumed to be VAT registered by default — VAT
+  calculation is not built into billing logic. (Was a hard client requirement
+  when this was single-tenant; revisit if/when a registered business signs up.)
+- Payments are informal QR (a cafe shows its own eSewa/Khalti/FonePay QR code) —
   there is no real payment gateway API integration. The Payment.method field is
   a PaymentMethod enum (cash | esewa_qr | khalti_qr | fonepay_qr) — this gives us
   DB-level typo protection for reporting, NOT a signal that it's tied to real
   transaction verification. Adding a new payment provider later requires a schema
   migration to extend the enum.
-- MVP scope excludes: inventory tracking, QR customer self-ordering, multi-tenant
-  logic, reports/analytics dashboard, table merge/split. These come in v2+.
+- Still excluded from scope (candidates for a future v2+ pass): inventory
+  tracking, QR customer self-ordering, reports/analytics dashboard, table
+  merge/split, per-cafe billing/subscription management for the platform itself.
 - Order status is tracked at BOTH the Order level and the individual OrderItem
   level — this is intentional, since different items in one order finish cooking
   at different times (see schema notes below)
@@ -51,6 +80,10 @@ SaaS product after the first client's system is stable.
   feature modules, always go through the shared PrismaModule
 - Controller → Service → PrismaService is the standard flow; controllers never
   contain business logic directly
+- Every tenant-scoped service method takes `cafeId` as its first parameter and
+  scopes its Prisma calls with it (directly, or transitively through a parent
+  relation for child models — see Multi-tenancy above). New endpoints should
+  follow this pattern rather than trusting a cafeId from the request body/query.
 
 ## Developer context
 - Srijan is rebuilding his hands-on coding ability. When making non-trivial code
@@ -61,17 +94,23 @@ SaaS product after the first client's system is stable.
 ## Not yet built (do not assume these exist)
 - Socket events beyond the two kitchen<->waiter ones above (e.g. nothing
   pushes to Tables or Billing yet -- they still poll)
+- A cafe signup/onboarding flow — the `Cafe` table is currently seeded by
+  hand (see prisma/seed.ts), not created through any UI or API endpoint
 
 ## Admin capabilities
 - Menu management (categories, items, modifiers), table management, and
   staff management (add waiters/cashiers, edit roles, deactivate, reset
-  PINs) all live under /admin in the web app. Nothing requires editing the
-  DB or seed script by hand anymore for day-to-day staff changes.
+  PINs) all live under /admin in the web app, scoped to the logged-in
+  staff member's own cafe. Nothing requires editing the DB or seed script
+  by hand anymore for day-to-day staff changes.
 
-## Known gaps (tracked, not urgent for MVP)
-- Test coverage: OrdersService (the full order lifecycle) and AuthService
-  (PIN login) now have real unit tests against a mocked PrismaService —
-  see src/orders/orders.service.spec.ts and src/auth/auth.service.spec.ts.
-  The remaining .spec.ts files are still "should be defined" stubs (now at
-  least passing DI correctly, unlike before). Controller-level and e2e
-  coverage is still not built.
+## Known gaps (tracked, not urgent)
+- Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and
+  AuthService (cafe-aware PIN login) have real unit tests against a mocked
+  PrismaService — see src/orders/orders.service.spec.ts and
+  src/auth/auth.service.spec.ts. The remaining .spec.ts files are still
+  "should be defined" stubs (passing DI correctly via guard overrides).
+  Controller-level and e2e coverage is still not built.
+- No cafe signup/onboarding UI yet — new cafes go in via prisma/seed.ts by hand.
+- No per-cafe subscription/billing plumbing yet (this is a platform SaaS goal,
+  not the in-app cafe billing/POS billing feature, which already works).
