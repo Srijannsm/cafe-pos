@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetchJson } from "../../../lib/api";
 import { useToast } from "../../../components/Toast";
+import { QRCodeSVG } from "qrcode.react";
 import { IconTable, IconEdit, IconCheck, IconX, IconQrCode } from "../../../components/icons";
 import { SectionCard } from "../_components/SectionCard";
 import { Input } from "../../../components/ui/Input";
@@ -29,6 +30,8 @@ export default function TablesManagementPage() {
   const [newTableNumber, setNewTableNumber] = useState("");
   const [newTableCapacity, setNewTableCapacity] = useState("");
   const [savingTable, setSavingTable] = useState(false);
+
+  const [qrTable, setQrTable] = useState<TableRow | null>(null);
 
   const refreshAll = useCallback(async () => {
     const tablesRes = await apiFetchJson<TableRow[]>("/tables");
@@ -100,6 +103,32 @@ export default function TablesManagementPage() {
     } catch {
       showToast(`Could not regenerate the link for "${table.tableNumber}"`, "error");
     }
+  }
+
+  function handlePrintQr(table: TableRow) {
+    const printWindow = window.open("", "_blank", "width=420,height=520");
+    if (!printWindow) return;
+    const svg = document.getElementById(`qr-svg-${table.id}`)?.outerHTML ?? "";
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Table ${table.tableNumber} -- Scan to order</title>
+          <style>
+            body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; gap: 16px; }
+            h1 { font-size: 20px; margin: 0; }
+            p { font-size: 13px; color: #666; margin: 0; }
+          </style>
+        </head>
+        <body>
+          ${svg}
+          <h1>Table ${table.tableNumber}</h1>
+          <p>Scan to view the menu and order</p>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   }
 
   const filteredTables = tables.filter((table) => table.tableNumber.toLowerCase().includes(tableSearch.toLowerCase()));
@@ -201,11 +230,19 @@ export default function TablesManagementPage() {
                       </td>
                       <td className="py-4 pr-4">
                         <div className="flex items-center gap-2">
-                          <IconQrCode className="h-4 w-4 shrink-0 text-ink-faint" />
+                          <button
+                            type="button"
+                            onClick={() => setQrTable(table)}
+                            className="label-sm inline-flex items-center gap-1.5 text-brand-strong hover:underline"
+                          >
+                            <IconQrCode className="h-4 w-4 shrink-0" />
+                            Show QR
+                          </button>
+                          <span className="text-ink-faint">·</span>
                           <button
                             type="button"
                             onClick={() => handleCopyLink(table)}
-                            className="label-sm text-brand-strong hover:underline"
+                            className="label-sm text-ink-secondary hover:underline"
                           >
                             Copy link
                           </button>
@@ -277,6 +314,50 @@ export default function TablesManagementPage() {
           </div>
         )}
       </SectionCard>
+
+      {qrTable && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setQrTable(null)}
+        >
+          <div
+            className="w-full max-w-xs rounded-lg border border-border-subtle bg-surface-raised p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="heading-sm text-ink-primary">Table {qrTable.tableNumber}</h3>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setQrTable(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
+              >
+                <IconX className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex justify-center rounded-md bg-white p-4">
+              <QRCodeSVG
+                id={`qr-svg-${qrTable.id}`}
+                value={orderingLink(qrTable)}
+                size={200}
+                level="M"
+              />
+            </div>
+
+            <p className="body-sm mt-4 break-all text-ink-secondary">{orderingLink(qrTable)}</p>
+
+            <div className="mt-4 flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={() => handleCopyLink(qrTable)}>
+                Copy link
+              </Button>
+              <Button className="flex-1" onClick={() => handlePrintQr(qrTable)}>
+                Print
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

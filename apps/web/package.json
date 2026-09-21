@@ -14,6 +14,7 @@
     "@tailwindcss/postcss": "^4.3.3",
     "next": "16.3.4",
     "postcss": "^8.5.23",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "socket.io-client": "^4.8.1",
