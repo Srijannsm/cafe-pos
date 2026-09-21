@@ -1,141 +1,37 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetchJson } from "../../lib/api";
-import { NumericKeypad } from "../../components/NumericKeypad";
+import { getCafeSlug } from "../../lib/api";
 
-type StaffOption = {
-  id: number;
-  name: string;
-  role: string;
-};
-
-const AVATAR_TONES = [
-  "bg-orange-100 text-orange-800",
-  "bg-blue-100 text-blue-800",
-  "bg-emerald-100 text-emerald-800",
-  "bg-violet-100 text-violet-800",
-  "bg-rose-100 text-rose-800",
-];
-
-function toneFor(id: number) {
-  return AVATAR_TONES[id % AVATAR_TONES.length];
-}
-
-export default function LoginPage() {
+// This bare /login route predates multi-tenancy. Staff now log in at
+// /c/:slug/login, so this just forwards to the cafe this device last used
+// (remembered in localStorage) -- and if we don't know one yet, it says so
+// instead of guessing.
+export default function LoginRedirectPage() {
   const router = useRouter();
-  const [staff, setStaff] = useState<StaffOption[]>([]);
-  const [loadingStaff, setLoadingStaff] = useState(true);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
-  const [shake, setShake] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [noCafeKnown, setNoCafeKnown] = useState(false);
 
   useEffect(() => {
-    apiFetchJson<StaffOption[]>("/users/login-options")
-      .then(setStaff)
-      .finally(() => setLoadingStaff(false));
-  }, []);
-
-  function selectPerson(id: number) {
-    setSelectedUserId(id);
-    setPin("");
-    setError("");
-  }
-
-  async function handleLogin(pinValue: string) {
-    setSubmitting(true);
-    setError("");
-    try {
-      const result = await apiFetchJson<{ accessToken: string; user: { id: number; name: string; role: string } }>(
-        "/auth/login",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: selectedUserId, pin: pinValue }),
-        },
-      );
-      localStorage.setItem("accessToken", result.accessToken);
-      localStorage.setItem("currentUser", JSON.stringify(result.user));
-      router.push("/");
-    } catch {
-      setError("Invalid PIN, please try again");
-      setPin("");
-      setShake(true);
-      setTimeout(() => setShake(false), 350);
-      setSubmitting(false);
+    const slug = getCafeSlug();
+    if (slug) {
+      router.replace(`/c/${slug}/login`);
+    } else {
+      setNoCafeKnown(true);
     }
-  }
+  }, [router]);
 
-  const selectedPerson = staff.find((p) => p.id === selectedUserId) ?? null;
+  if (!noCafeKnown) return null;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
-      <div className="text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand">
-          ☕
-        </div>
-        <h1 className="heading-lg text-ink-primary">Who&apos;s working today?</h1>
-        <p className="body-md mt-1 text-ink-secondary">Tap your name, then enter your PIN</p>
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand">
+        ☕
       </div>
-
-      {loadingStaff ? (
-        <div className="flex flex-wrap justify-center gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 w-28 animate-pulse rounded-xl bg-surface-sunken" />
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-wrap justify-center gap-3">
-          {staff.map((person) => (
-            <button
-              key={person.id}
-              onClick={() => selectPerson(person.id)}
-              className={`flex w-28 flex-col items-center gap-2 rounded-xl border-2 p-4 text-center transition active:scale-95 ${
-                selectedUserId === person.id
-                  ? "border-brand bg-brand-tint shadow-sm"
-                  : "border-transparent bg-surface-raised shadow-sm hover:border-border-subtle"
-              }`}
-            >
-              <span
-                className={`flex h-12 w-12 items-center justify-center rounded-full text-lg font-bold ${toneFor(person.id)}`}
-              >
-                {person.name.charAt(0).toUpperCase()}
-              </span>
-              <span className="body-md font-semibold text-ink-primary">{person.name}</span>
-              <span className="label-sm text-ink-secondary">{person.role}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {selectedPerson && (
-        <div className="animate-card-in flex flex-col items-center gap-4 rounded-xl bg-surface-raised p-6 shadow-md">
-          <p className="body-md text-ink-secondary">
-            Enter PIN for <span className="font-semibold text-ink-primary">{selectedPerson.name}</span>
-          </p>
-
-          <NumericKeypad
-            value={pin}
-            maxLength={4}
-            shake={shake}
-            onChange={(next) => {
-              if (submitting) return;
-              setPin(next);
-              setError("");
-              if (next.length === 4) handleLogin(next);
-            }}
-          />
-
-          {error && (
-            <p className="body-md rounded-md bg-status-danger-tint px-3 py-2 font-medium text-status-danger-ink">
-              {error}
-            </p>
-          )}
-        </div>
-      )}
+      <h1 className="heading-lg text-ink-primary">We don&apos;t know which cafe this is</h1>
+      <p className="body-md text-ink-secondary">
+        Ask your manager for this cafe&apos;s login link -- it looks like /c/your-cafe/login.
+      </p>
     </main>
   );
 }

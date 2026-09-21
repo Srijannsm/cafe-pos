@@ -12,7 +12,8 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   if (res.status === 401) {
     logout();
-    window.location.href = "/login";
+    const slug = getCafeSlug();
+    window.location.href = slug ? `/c/${slug}/login` : "/login";
     throw new Error(`API request failed: ${res.status} ${res.statusText} (${path})`);
   }
 
@@ -38,12 +39,26 @@ export type CurrentUser = {
   id: number;
   name: string;
   role: string;
+  cafeId: number;
 };
 
 export function getCurrentUser(): CurrentUser | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem("currentUser");
   return raw ? JSON.parse(raw) : null;
+}
+
+// The cafe slug is tied to this device/browser, not to a particular staff
+// session -- it's how we know which cafe's login screen to send someone
+// back to after a logout or an expired token, without asking them to
+// re-type their cafe's URL every time.
+export function getCafeSlug(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("cafeSlug");
+}
+
+export function setCafeSlug(slug: string) {
+  localStorage.setItem("cafeSlug", slug);
 }
 
 export function logout() {
