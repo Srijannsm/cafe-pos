@@ -8,6 +8,10 @@ import { IconTable, IconEdit, IconCheck, IconX, IconQrCode } from "../../../comp
 import { SectionCard } from "../_components/SectionCard";
 import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
+import { DataTable } from "../../../components/ui/DataTable";
+import { PageHeader } from "../../../components/ui/PageHeader";
+import { Modal } from "../../../components/ui/Modal";
+import { ConfirmDialog } from "../../../components/ui/ConfirmDialog";
 
 type TableRow = {
   id: number;
@@ -22,6 +26,7 @@ export default function TablesManagementPage() {
 
   const [tables, setTables] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [tableDrafts, setTableDrafts] = useState<Record<number, { tableNumber: string; capacity: string }>>({});
   const [editingTableId, setEditingTableId] = useState<number | null>(null);
@@ -32,6 +37,7 @@ export default function TablesManagementPage() {
   const [savingTable, setSavingTable] = useState(false);
 
   const [qrTable, setQrTable] = useState<TableRow | null>(null);
+  const [regeneratingTable, setRegeneratingTable] = useState<TableRow | null>(null);
 
   const refreshAll = useCallback(async () => {
     const tablesRes = await apiFetchJson<TableRow[]>("/tables");
@@ -44,7 +50,10 @@ export default function TablesManagementPage() {
   }, []);
 
   useEffect(() => {
-    refreshAll().finally(() => setLoading(false));
+    refreshAll()
+      .then(() => setLoadError(false))
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
   }, [refreshAll]);
 
   async function handleAddTable(e: React.FormEvent) {
@@ -136,10 +145,7 @@ export default function TablesManagementPage() {
   return (
     <div className="space-y-8">
       {toastHost}
-      <div>
-        <h1 className="display-md text-ink-primary">Tables</h1>
-        <p className="body-md mt-1 text-ink-secondary">Add tables and edit numbers or seating.</p>
-      </div>
+      <PageHeader title="Tables" description="Add tables and edit numbers or seating." />
 
       <SectionCard icon={<IconTable />} title="Add table" description="Table status follows the order lifecycle and can't be set here.">
         <form onSubmit={handleAddTable} className="flex flex-wrap items-end gap-3">
@@ -157,185 +163,182 @@ export default function TablesManagementPage() {
               required
             />
           </div>
-          <Button type="submit" disabled={savingTable}>
+          <Button type="submit" loading={savingTable}>
             Add table
           </Button>
         </form>
       </SectionCard>
 
       <SectionCard icon={<IconTable />} title="Existing tables" description="Search and edit table numbers or seating.">
-        <div className="mb-5 sm:max-w-xs">
-          <Input pill placeholder="Search tables…" value={tableSearch} onChange={(e) => setTableSearch(e.target.value)} />
-        </div>
-
-        {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-md bg-surface-sunken" />
-            ))}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                  <th className="py-3 pr-4">Table number</th>
-                  <th className="py-3 pr-4">Capacity</th>
-                  <th className="py-3 pr-4">Self-order link</th>
-                  <th className="py-3 pr-0 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTables.map((table) => {
-                  const isEditing = editingTableId === table.id;
-                  const draft = tableDrafts[table.id] ?? {
-                    tableNumber: table.tableNumber,
-                    capacity: String(table.capacity),
-                  };
-                  return (
-                    <tr key={table.id} className="border-b border-border-subtle last:border-0">
-                      <td className="py-4 pr-4">
-                        {isEditing ? (
-                          <Input
-                            autoFocus
-                            className="w-36"
-                            value={draft.tableNumber}
-                            onChange={(e) =>
-                              setTableDrafts((cur) => ({
-                                ...cur,
-                                [table.id]: { ...draft, tableNumber: e.target.value },
-                              }))
-                            }
-                          />
-                        ) : (
-                          <span className="body-md font-medium text-ink-primary">{table.tableNumber}</span>
-                        )}
-                      </td>
-                      <td className="py-4 pr-4">
-                        {isEditing ? (
-                          <Input
-                            type="number"
-                            className="w-24"
-                            value={draft.capacity}
-                            onChange={(e) =>
-                              setTableDrafts((cur) => ({
-                                ...cur,
-                                [table.id]: { ...draft, capacity: e.target.value },
-                              }))
-                            }
-                          />
-                        ) : (
-                          <span className="body-md text-ink-secondary">{table.capacity}</span>
-                        )}
-                      </td>
-                      <td className="py-4 pr-4">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setQrTable(table)}
-                            className="label-sm inline-flex items-center gap-1.5 text-brand-strong hover:underline"
-                          >
-                            <IconQrCode className="h-4 w-4 shrink-0" />
-                            Show QR
-                          </button>
-                          <span className="text-ink-faint">·</span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyLink(table)}
-                            className="label-sm text-ink-secondary hover:underline"
-                          >
-                            Copy link
-                          </button>
-                          <span className="text-ink-faint">·</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRegenerateQr(table)}
-                            className="label-sm text-ink-secondary hover:underline"
-                          >
-                            Regenerate
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-4 pr-0 text-right">
-                        {isEditing ? (
-                          <div className="flex justify-end gap-1.5">
-                            <button
-                              type="button"
-                              aria-label={`Save table ${table.tableNumber}`}
-                              onClick={() => {
-                                handleUpdateTable(table, {
-                                  tableNumber: draft.tableNumber,
-                                  capacity: Number(draft.capacity),
-                                });
-                                setEditingTableId(null);
-                              }}
-                              className="flex h-9 w-9 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
-                            >
-                              <IconCheck className="h-4 w-4" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Cancel edit"
-                              onClick={() => {
-                                setTableDrafts((cur) => ({
-                                  ...cur,
-                                  [table.id]: { tableNumber: table.tableNumber, capacity: String(table.capacity) },
-                                }));
-                                setEditingTableId(null);
-                              }}
-                              className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
-                            >
-                              <IconX className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            aria-label={`Edit table ${table.tableNumber}`}
-                            onClick={() => setEditingTableId(table.id)}
-                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
-                          >
-                            <IconEdit className="h-4 w-4" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filteredTables.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="body-md py-8 text-center text-ink-faint">
-                      {tables.length === 0 ? "No tables yet." : "No tables match your search."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          columns={[
+            { header: "Table number", skeletonWidth: "w-16" },
+            { header: "Capacity", skeletonWidth: "w-8" },
+            { header: "Self-order link", skeletonWidth: "w-40" },
+            { header: "Actions", headerClassName: "text-right" },
+          ]}
+          data={filteredTables}
+          rowKey={(table) => table.id}
+          loading={loading}
+          error={loadError}
+          onRetry={() => {
+            setLoading(true);
+            setLoadError(false);
+            refreshAll()
+              .then(() => setLoadError(false))
+              .catch(() => setLoadError(true))
+              .finally(() => setLoading(false));
+          }}
+          search={tableSearch}
+          onSearchChange={setTableSearch}
+          searchPlaceholder="Search tables…"
+          errorState={{
+            title: "Couldn't load tables",
+            description: "The table data didn't come through — check your connection and try again.",
+          }}
+          empty={{
+            icon: <IconTable />,
+            title: tables.length === 0 ? "No tables yet" : "No tables match your search",
+            description:
+              tables.length === 0
+                ? "Add your first table using the form above and it will appear here."
+                : "Try a different search term or clear the filter.",
+          }}
+          renderRow={(table) => {
+            const isEditing = editingTableId === table.id;
+            const draft = tableDrafts[table.id] ?? {
+              tableNumber: table.tableNumber,
+              capacity: String(table.capacity),
+            };
+            return (
+              <>
+                <td className="py-4 pr-4">
+                  {isEditing ? (
+                    <Input
+                      autoFocus
+                      className="w-36"
+                      value={draft.tableNumber}
+                      onChange={(e) =>
+                        setTableDrafts((cur) => ({
+                          ...cur,
+                          [table.id]: { ...draft, tableNumber: e.target.value },
+                        }))
+                      }
+                    />
+                  ) : (
+                    <span className="body-md font-medium text-ink-primary">{table.tableNumber}</span>
+                  )}
+                </td>
+                <td className="py-4 pr-4">
+                  {isEditing ? (
+                    <Input
+                      type="number"
+                      className="w-24"
+                      value={draft.capacity}
+                      onChange={(e) =>
+                        setTableDrafts((cur) => ({
+                          ...cur,
+                          [table.id]: { ...draft, capacity: e.target.value },
+                        }))
+                      }
+                    />
+                  ) : (
+                    <span className="body-md text-ink-secondary">{table.capacity}</span>
+                  )}
+                </td>
+                <td className="py-4 pr-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQrTable(table)}
+                      className="label-sm inline-flex items-center gap-1.5 text-brand-strong hover:underline"
+                    >
+                      <IconQrCode className="h-4 w-4 shrink-0" />
+                      Show QR
+                    </button>
+                    <span className="text-ink-faint">·</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(table)}
+                      className="label-sm text-ink-secondary hover:underline"
+                    >
+                      Copy link
+                    </button>
+                    <span className="text-ink-faint">·</span>
+                    <button
+                      type="button"
+                      onClick={() => setRegeneratingTable(table)}
+                      className="label-sm text-ink-secondary hover:underline"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </td>
+                <td className="py-4 pr-0 text-right">
+                  {isEditing ? (
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        type="button"
+                        aria-label={`Save table ${table.tableNumber}`}
+                        onClick={() => {
+                          handleUpdateTable(table, {
+                            tableNumber: draft.tableNumber,
+                            capacity: Number(draft.capacity),
+                          });
+                          setEditingTableId(null);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
+                      >
+                        <IconCheck className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel edit"
+                        onClick={() => {
+                          setTableDrafts((cur) => ({
+                            ...cur,
+                            [table.id]: { tableNumber: table.tableNumber, capacity: String(table.capacity) },
+                          }));
+                          setEditingTableId(null);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
+                      >
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={`Edit table ${table.tableNumber}`}
+                      onClick={() => setEditingTableId(table.id)}
+                      className="ml-auto flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
+                    >
+                      <IconEdit className="h-4 w-4" />
+                    </button>
+                  )}
+                </td>
+              </>
+            );
+          }}
+        />
       </SectionCard>
 
-      {qrTable && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setQrTable(null)}
-        >
-          <div
-            className="w-full max-w-xs rounded-lg border border-border-subtle bg-surface-raised p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="heading-sm text-ink-primary">Table {qrTable.tableNumber}</h3>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => setQrTable(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
-              >
-                <IconX className="h-4 w-4" />
-              </button>
-            </div>
+      <ConfirmDialog
+        open={regeneratingTable !== null}
+        title={`Regenerate link for table ${regeneratingTable?.tableNumber ?? ""}?`}
+        description="The current QR code and ordering link will stop working. You'll need to print a new QR code for this table."
+        confirmLabel="Regenerate"
+        tone="warning"
+        onConfirm={() => {
+          if (regeneratingTable) handleRegenerateQr(regeneratingTable);
+          setRegeneratingTable(null);
+        }}
+        onCancel={() => setRegeneratingTable(null)}
+      />
 
+      <Modal open={qrTable !== null} onClose={() => setQrTable(null)} size="sm" title={qrTable ? `Table ${qrTable.tableNumber}` : ""}>
+        {qrTable && (
+          <>
             <div className="flex justify-center rounded-md bg-white p-4">
               <QRCodeSVG
                 id={`qr-svg-${qrTable.id}`}
@@ -355,9 +358,9 @@ export default function TablesManagementPage() {
                 Print
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

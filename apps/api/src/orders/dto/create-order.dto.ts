@@ -1,4 +1,4 @@
-import { IsEnum, IsInt } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
 import { OrderType } from '../../generated/prisma/client.js';
 
 export class CreateOrderDto {
@@ -10,4 +10,8 @@ export class CreateOrderDto {
 
   @IsEnum(OrderType)
   orderType: OrderType;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

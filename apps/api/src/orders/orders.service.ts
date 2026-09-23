@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
 import { RecordPaymentDto } from './dto/record-payment.dto.js';
+import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
 import { Prisma, OrderStatus } from '../generated/prisma/client.js';
 import { OrdersGateway } from './orders.gateway.js';
 
@@ -144,13 +145,14 @@ export class OrdersService {
       }
 
       // A new round on an order the kitchen already finished ("served")
-      // needs to go back to "preparing" -- otherwise Kitchen's board
-      // (which only queries status=preparing) would never show this new
-      // item, and Serve would stay wrongly enabled from the last round.
+      // goes back to "pending" so the waiter can review, remove items if
+      // the customer changes their mind, and then explicitly send to kitchen.
+      // Previously this went straight to "preparing" which bypassed the
+      // waiter's chance to cancel before the kitchen sees the new items.
       if (order.status === 'served') {
         await tx.order.update({
           where: { id: orderId },
-          data: { status: 'preparing' },
+          data: { status: 'pending' },
         });
       }
 
@@ -160,9 +162,8 @@ export class OrdersService {
       });
     });
 
-    if (order.status === 'served') {
-      this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId });
-    }
+    // Don't auto-notify the kitchen — waiter will press "Send to kitchen"
+    // themselves once they're happy with the new round.
 
     return result;
   }
@@ -321,6 +322,9 @@ export class OrdersService {
             },
           },
         },
+        cafe: {
+          select: { vatEnabled: true, vatRate: true },
+        },
       },
     });
 
@@ -334,7 +338,7 @@ export class OrdersService {
       );
     }
 
-    let total = new Prisma.Decimal(0);
+    let subtotal = new Prisma.Decimal(0);
 
     for (const item of order.orderItems) {
       const modifierTotal = item.orderItemModifiers.reduce(
@@ -342,12 +346,41 @@ export class OrdersService {
         new Prisma.Decimal(0),
       );
       const lineTotal = item.price.plus(modifierTotal).times(item.quantity);
-      total = total.plus(lineTotal);
+      subtotal = subtotal.plus(lineTotal);
     }
 
-    return this.prisma.order.update({
-      where: { id: orderId },
-      data: { status: 'billed', total },
+    let total: Prisma.Decimal;
+    let vatAmount: Prisma.Decimal | null = null;
+
+    if (order.cafe.vatEnabled) {
+      // vatRate is stored as a percentage (e.g. 13 means 13%)
+      vatAmount = subtotal.times(order.cafe.vatRate).dividedBy(100).toDecimalPlaces(2);
+      total = subtotal.plus(vatAmount);
+    } else {
+      total = subtotal;
+    }
+
+    // Atomically increment the cafe's bill counter and assign the next
+    // sequential bill number to this order. Using $transaction ensures
+    // no two bills for the same cafe can get the same number even under
+    // concurrent requests.
+    return this.prisma.$transaction(async (tx) => {
+      const updatedCafe = await tx.cafe.update({
+        where: { id: cafeId },
+        data: { lastBillNumber: { increment: 1 } },
+        select: { lastBillNumber: true },
+      });
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'billed',
+          billNumber: updatedCafe.lastBillNumber,
+          subtotal: order.cafe.vatEnabled ? subtotal : null,
+          vatAmount,
+          total,
+        },
+      });
     });
   }
 
@@ -374,13 +407,20 @@ export class OrdersService {
 
     return this.prisma.order.update({
       where: { id: orderId },
-      data: { status: 'served', total: null },
+      data: { status: 'served', total: null, subtotal: null, vatAmount: null },
     });
   }
 
   async recordPayment(cafeId: number, orderId: number, dto: RecordPaymentDto) {
   const order = await this.prisma.order.findFirst({
     where: { id: orderId, cafeId },
+    include: {
+      orderItems: {
+        include: {
+          menuItem: { select: { id: true, trackStock: true } },
+        },
+      },
+    },
   });
 
   if (!order) {
@@ -412,9 +452,66 @@ export class OrdersService {
       data: { status: 'free' },
     });
 
+    // Deduct stock for tracked menu items
+    for (const item of order.orderItems) {
+      if (!item.menuItem.trackStock) continue;
+      await tx.menuItem.update({
+        where: { id: item.menuItem.id },
+        data: {
+          stockQuantity: {
+            decrement: item.quantity,
+          },
+        },
+      });
+      // Clamp to 0 — never go negative
+      await tx.$executeRaw`
+        UPDATE "menu_items"
+        SET "stock_quantity" = GREATEST("stock_quantity", 0)
+        WHERE id = ${item.menuItem.id}
+      `;
+    }
+
     return payment;
   });
 }
+
+  async removeItem(cafeId: number, orderItemId: number) {
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: orderItemId, order: { cafeId } },
+      include: { order: { select: { id: true, status: true } } },
+    });
+
+    if (!orderItem) {
+      throw new NotFoundException(`Order item ${orderItemId} does not exist`);
+    }
+
+    const orderStatus = orderItem.order.status;
+
+    // Allow removal when order is still pending (not sent to kitchen yet)
+    // OR when order is preparing but this specific item is still pending in the
+    // kitchen (waiter added a new round and wants to remove before kitchen sees it).
+    // Items already marked ready or served cannot be removed.
+    if (orderStatus === 'pending') {
+      // Fine — order hasn't gone to kitchen yet
+    } else if (orderStatus === 'preparing' && orderItem.status === 'pending') {
+      // Fine — item not yet picked up by kitchen
+    } else {
+      throw new BadRequestException(
+        orderStatus === 'preparing'
+          ? 'This item is already being prepared by the kitchen and cannot be removed'
+          : 'Items can only be removed before they reach the kitchen',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.delete({ where: { id: orderItemId } });
+
+      // If this was the last pending item on a preparing order and removing it
+      // leaves no items at all, or all remaining items are ready/served,
+      // we don't need to do anything — the order status stays as-is.
+      // (The kitchen will notice nothing is left to prepare.)
+    });
+  }
 
   async findOne(cafeId: number, orderId: number) {
   const order = await this.prisma.order.findFirst({
@@ -431,6 +528,7 @@ export class OrdersService {
       table: true,
       waiter: { select: { id: true, name: true } },
       payments: true,
+      cafe: { select: { name: true, vatEnabled: true, vatRate: true, panNumber: true } },
     },
   });
 
@@ -440,5 +538,22 @@ export class OrdersService {
 
   return order;
 }
+
+
+  async updateNotes(cafeId: number, orderId: number, dto: UpdateOrderNotesDto) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} does not exist`);
+    }
+
+    return this.prisma.order.update({
+      where: { id: orderId },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { notes: dto.notes?.trim() || null } as any,
+    });
+  }
 
 }

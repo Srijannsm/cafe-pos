@@ -7,12 +7,20 @@ import { platformFetchJson, getPlatformToken } from "../../../../lib/api";
 import { useToast } from "../../../../components/Toast";
 import { IconChevronRight, IconUsers, IconClipboardList, IconReceipt } from "../../../../components/icons";
 import { SectionCard } from "../../../admin/_components/SectionCard";
+import { ErrorState } from "../../../../components/ui/ErrorState";
+import { Skeleton } from "../../../../components/ui/Skeleton";
+import { StatCard } from "../../../../components/ui/StatCard";
+import { Button } from "../../../../components/ui/Button";
+import { InlineAlert } from "../../../../components/ui/InlineAlert";
 
 type CafeDetail = {
   id: number;
   name: string;
   slug: string;
   isActive: boolean;
+  vatEnabled: boolean;
+  vatRate: string;
+  panNumber: string | null;
   createdAt: string;
   users: { id: number; name: string; role: string; isActive: boolean }[];
   _count: { menuItems: number; tables: number; orders: number };
@@ -38,13 +46,26 @@ export default function CafeDetailPage() {
   const [cafe, setCafe] = useState<CafeDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // VAT edit state
+  const [editingVat, setEditingVat] = useState(false);
+  const [vatEnabled, setVatEnabled] = useState(false);
+  const [vatRate, setVatRate] = useState("13");
+  const [panNumber, setPanNumber] = useState("");
+  const [vatSaving, setVatSaving] = useState(false);
+  const [vatError, setVatError] = useState("");
+
   useEffect(() => {
     if (!getPlatformToken()) {
       router.replace("/platform/login");
       return;
     }
     platformFetchJson<CafeDetail>(`/platform/cafes/${params.id}`)
-      .then(setCafe)
+      .then((data) => {
+        setCafe(data);
+        setVatEnabled(data.vatEnabled);
+        setVatRate(String(Number(data.vatRate)));
+        setPanNumber(data.panNumber ?? "");
+      })
       .catch(() => showToast("Could not load that cafe", "error"))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -53,34 +74,72 @@ export default function CafeDetailPage() {
   async function handleToggleActive() {
     if (!cafe) return;
     try {
-      await platformFetchJson(`/platform/cafes/${cafe.id}`, {
+      const updated = await platformFetchJson<CafeDetail>(`/platform/cafes/${cafe.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !cafe.isActive }),
       });
-      setCafe({ ...cafe, isActive: !cafe.isActive });
+      setCafe({ ...cafe, isActive: updated.isActive });
       showToast(cafe.isActive ? `"${cafe.name}" deactivated` : `"${cafe.name}" reactivated`);
     } catch {
       showToast("Could not update that cafe", "error");
     }
   }
 
+  async function handleSaveVat() {
+    if (!cafe) return;
+    setVatError("");
+    setVatSaving(true);
+    try {
+      const updated = await platformFetchJson<CafeDetail>(`/platform/cafes/${cafe.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vatEnabled,
+          vatRate: vatEnabled ? Number(vatRate) : undefined,
+          panNumber: vatEnabled ? (panNumber.trim() || null) : null,
+        }),
+      });
+      setCafe((prev) => prev ? { ...prev, vatEnabled: updated.vatEnabled, vatRate: updated.vatRate, panNumber: updated.panNumber } : prev);
+      setEditingVat(false);
+      showToast("VAT settings saved");
+    } catch (err) {
+      setVatError(err instanceof Error ? err.message : "Could not save VAT settings.");
+    } finally {
+      setVatSaving(false);
+    }
+  }
+
+  function cancelVatEdit() {
+    if (!cafe) return;
+    setVatEnabled(cafe.vatEnabled);
+    setVatRate(String(Number(cafe.vatRate)));
+    setPanNumber(cafe.panNumber ?? "");
+    setVatError("");
+    setEditingVat(false);
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-canvas">
-        <div className="h-8 w-40 animate-pulse rounded-md bg-surface-sunken" />
+        <Skeleton className="h-8 w-40" />
       </div>
     );
   }
 
   if (!cafe) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 p-6 sm:p-10">
+      <div className="mx-auto max-w-3xl p-6 sm:p-10">
         {toastHost}
-        <p className="body-md text-ink-secondary">That cafe couldn&apos;t be found.</p>
-        <Link href="/platform" className="body-md font-medium text-brand-strong hover:underline">
-          Back to platform admin
-        </Link>
+        <ErrorState
+          title="Cafe not found"
+          description="That cafe couldn't be loaded. It may have been removed."
+        />
+        <div className="mt-4 text-center">
+          <Link href="/platform" className="body-md font-medium text-brand-strong hover:underline">
+            Back to platform admin
+          </Link>
+        </div>
       </div>
     );
   }
@@ -113,19 +172,85 @@ export default function CafeDetailPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-lg border border-border-subtle bg-surface-raised p-4 text-center shadow-sm">
-          <p className="display-md text-ink-primary">{cafe._count.menuItems}</p>
-          <p className="label-sm text-ink-secondary">Menu items</p>
-        </div>
-        <div className="rounded-lg border border-border-subtle bg-surface-raised p-4 text-center shadow-sm">
-          <p className="display-md text-ink-primary">{cafe._count.tables}</p>
-          <p className="label-sm text-ink-secondary">Tables</p>
-        </div>
-        <div className="rounded-lg border border-border-subtle bg-surface-raised p-4 text-center shadow-sm">
-          <p className="display-md text-ink-primary">{cafe._count.orders}</p>
-          <p className="label-sm text-ink-secondary">Orders, all-time</p>
-        </div>
+        <StatCard label="Menu items" value={cafe._count.menuItems} />
+        <StatCard label="Tables" value={cafe._count.tables} />
+        <StatCard label="Orders, all-time" value={cafe._count.orders} />
       </div>
+
+      {/* VAT Settings */}
+      <SectionCard icon={<IconReceipt />} title="VAT / Tax settings" description="Enable VAT for this cafe to show tax breakdowns on bills and receipts.">
+        {editingVat ? (
+          <div className="space-y-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vatEnabled}
+                onChange={(e) => setVatEnabled(e.target.checked)}
+                className="h-4 w-4 rounded accent-brand"
+              />
+              <span className="body-md text-ink-primary font-medium">VAT registered</span>
+            </label>
+
+            {vatEnabled && (
+              <>
+                <div>
+                  <label className="label-sm mb-1 block text-ink-secondary">VAT rate (%)</label>
+                  <input
+                    type="number"
+                    value={vatRate}
+                    onChange={(e) => setVatRate(e.target.value)}
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    className="body-md w-32 rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                  />
+                </div>
+                <div>
+                  <label className="label-sm mb-1 block text-ink-secondary">PAN number</label>
+                  <input
+                    type="text"
+                    value={panNumber}
+                    onChange={(e) => setPanNumber(e.target.value)}
+                    placeholder="e.g. 123456789"
+                    className="body-md w-full max-w-xs rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                  />
+                  <p className="body-sm mt-1 text-ink-faint">Printed on receipts for IRD compliance.</p>
+                </div>
+              </>
+            )}
+
+            {vatError && <InlineAlert>{vatError}</InlineAlert>}
+
+            <div className="flex items-center gap-2">
+              <Button onClick={handleSaveVat} loading={vatSaving} size="small">
+                Save
+              </Button>
+              <Button onClick={cancelVatEdit} variant="ghost" size="small" disabled={vatSaving}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="body-md text-ink-primary">
+                {cafe.vatEnabled ? (
+                  <>
+                    <span className="font-medium">VAT enabled</span>
+                    {" · "}{Number(cafe.vatRate)}%
+                    {cafe.panNumber && <>{" · PAN: "}{cafe.panNumber}</>}
+                  </>
+                ) : (
+                  <span className="text-ink-faint">VAT not enabled for this cafe.</span>
+                )}
+              </p>
+            </div>
+            <Button onClick={() => setEditingVat(true)} variant="secondary" size="small">
+              Edit
+            </Button>
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard icon={<IconUsers />} title="Staff" description={`${cafe.users.length} account(s) at this cafe.`}>
         <div className="overflow-x-auto">
@@ -174,7 +299,6 @@ export default function CafeDetailPage() {
                     <td className="py-3 pr-4 body-md text-ink-secondary">{order.orderType.replace("_", " ")}</td>
                     <td className="py-3 pr-4 body-md text-ink-secondary">{order.status}</td>
                     <td className="py-3 pr-0 text-right body-md text-ink-secondary">
-                      <IconReceipt className="mr-1 inline h-3 w-3" />
                       {order.total ?? "--"}
                     </td>
                   </tr>

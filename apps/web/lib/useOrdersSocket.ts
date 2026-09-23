@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -22,9 +22,14 @@ type Handlers = {
 // (network blip, server restart) a page's existing setInterval poll still
 // catches up within its normal interval, so there's no hard dependency on
 // the connection staying alive.
-export function useOrdersSocket(ready: boolean, handlers: Handlers) {
+//
+// Returns `connected` so callers can show a reconnection banner when the
+// socket is down. The poll is the fallback, but surfacing the drop gives
+// kitchen staff early warning before missing an order.
+export function useOrdersSocket(ready: boolean, handlers: Handlers): { connected: boolean } {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -33,6 +38,10 @@ export function useOrdersSocket(ready: boolean, handlers: Handlers) {
     if (!token) return;
 
     const socket: Socket = io(API_URL, { auth: { token } });
+
+    socket.on("connect", () => setConnected(true));
+    socket.on("disconnect", () => setConnected(false));
+    socket.on("connect_error", () => setConnected(false));
 
     socket.on("order.sentToKitchen", (payload: OrderSentToKitchenEvent) => {
       handlersRef.current.onSentToKitchen?.(payload);
@@ -43,6 +52,9 @@ export function useOrdersSocket(ready: boolean, handlers: Handlers) {
 
     return () => {
       socket.disconnect();
+      setConnected(false);
     };
   }, [ready]);
+
+  return { connected };
 }

@@ -3,16 +3,42 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { getCurrentUser, logout, type CurrentUser } from "../lib/api";
+import { getCurrentUser, logout, apiFetchJson, type CurrentUser } from "../lib/api";
 import { IconLogout } from "./icons";
+import { Dropdown } from "./ui/Dropdown";
+
+const AVATAR_TONES = [
+  "bg-avatar-1 text-avatar-1-ink",
+  "bg-avatar-2 text-avatar-2-ink",
+  "bg-avatar-3 text-avatar-3-ink",
+  "bg-avatar-4 text-avatar-4-ink",
+  "bg-avatar-5 text-avatar-5-ink",
+];
+function toneFor(id: number) {
+  return AVATAR_TONES[id % AVATAR_TONES.length];
+}
 
 export function NavBar() {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [billedCount, setBilledCount] = useState(0);
 
   useEffect(() => {
     setUser(getCurrentUser());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    function fetchBilledCount() {
+      apiFetchJson<{ id: number }[]>("/orders?status=billed")
+        .then((orders) => { if (!cancelled) setBilledCount(orders.length); })
+        .catch(() => {});
+    }
+    fetchBilledCount();
+    const interval = setInterval(fetchBilledCount, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   function handleLogout() {
@@ -21,56 +47,89 @@ export function NavBar() {
   }
 
   const linkClass = (href: string) =>
-    `rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+    `rounded-full px-4 py-2.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${
       pathname === href
         ? "bg-brand-tint text-brand-strong"
-        : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
+        : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary"
     }`;
 
   return (
-    <nav className="sticky top-0 z-40 flex items-center justify-between gap-4 border-b border-border-subtle bg-surface-raised/95 px-4 py-3 backdrop-blur sm:px-6">
-      <div className="flex items-center gap-4">
-        <span className="hidden items-center gap-1.5 font-display text-sm font-bold text-ink-primary sm:flex">
-          <span className="h-2 w-2 rounded-full bg-brand" />
-          Cafe POS
-        </span>
-        <div className="flex gap-1.5">
-          <Link href="/" className={linkClass("/")}>
-            Tables
-          </Link>
-          <Link href="/kitchen" className={linkClass("/kitchen")}>
-            Kitchen
-          </Link>
-          <Link href="/billing" className={linkClass("/billing")}>
-            Billing
-          </Link>
-          {user?.role === "admin" && (
-            <Link href="/admin" className={linkClass("/admin")}>
-              Admin
-            </Link>
-          )}
-        </div>
-      </div>
+    <>
+      {/* Skip navigation link — visible on focus for keyboard/screen-reader users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-surface-raised focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink-primary focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-focus-ring"
+      >
+        Skip to content
+      </a>
 
-      {user && (
-        <div className="flex items-center gap-3">
-          <div className="hidden items-center gap-2 sm:flex">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-stone-200 text-xs font-bold text-stone-700">
-              {user.name.charAt(0).toUpperCase()}
-            </span>
-            <span className="text-sm text-stone-600">
-              <span className="font-semibold text-stone-900">{user.name}</span> · {user.role}
-            </span>
+      <nav
+        aria-label="Main navigation"
+        className="sticky top-0 z-40 flex items-center justify-between gap-4 border-b border-border-subtle bg-surface-raised/95 px-4 py-3 backdrop-blur sm:px-6"
+      >
+        <div className="flex items-center gap-4">
+          <span className="hidden items-center gap-1.5 font-display text-sm font-bold text-ink-primary sm:flex">
+            <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
+            Cafe POS
+          </span>
+          <div className="flex gap-1.5" role="list">
+            <Link href="/" className={linkClass("/")} role="listitem">
+              Tables
+            </Link>
+            <Link href="/kitchen" className={linkClass("/kitchen")} role="listitem">
+              Kitchen
+            </Link>
+            <Link href="/billing" className={`${linkClass("/billing")} relative`} role="listitem">
+              Billing
+              {billedCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold leading-none text-white">
+                  {billedCount > 99 ? "99+" : billedCount}
+                </span>
+              )}
+            </Link>
+            {user?.role === "admin" && (
+              <Link href="/admin" className={linkClass("/admin")} role="listitem">
+                Admin
+              </Link>
+            )}
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
-          >
-            <IconLogout className="h-4 w-4" />
-            <span className="hidden sm:inline">Log out</span>
-          </button>
         </div>
-      )}
-    </nav>
+
+        {user && (
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 sm:flex">
+              <span className="body-sm text-ink-secondary">
+                <span className="font-semibold text-ink-primary">{user.name}</span> · {user.role}
+              </span>
+            </span>
+
+            <Dropdown
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              align="right"
+              trigger={
+                <button
+                  type="button"
+                  aria-label={`${user.name} — open user menu`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${toneFor(user.id)}`}
+                >
+                  {user.name.charAt(0).toUpperCase()}
+                </button>
+              }
+              items={[
+                {
+                  label: "Log out",
+                  icon: IconLogout,
+                  onClick: handleLogout,
+                },
+              ]}
+            />
+          </div>
+        )}
+      </nav>
+    </>
   );
 }

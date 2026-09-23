@@ -8,6 +8,13 @@ import { SectionCard } from "../_components/SectionCard";
 import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
 import { StatusBadge } from "../../../components/ui/StatusBadge";
+import { Skeleton } from "../../../components/ui/Skeleton";
+import { EmptyState } from "../../../components/ui/EmptyState";
+import { ErrorState } from "../../../components/ui/ErrorState";
+import { ConfirmDialog } from "../../../components/ui/ConfirmDialog";
+import { PageHeader } from "../../../components/ui/PageHeader";
+import { Select } from "../../../components/ui/Select";
+import { Tabs } from "../../../components/ui/Tabs";
 
 type Category = {
   id: number;
@@ -34,15 +41,13 @@ type MenuItem = {
   lowStockThreshold: number;
 };
 
-const selectClass =
-  "min-h-12 rounded-sm border border-border-subtle bg-surface-sunken px-3 text-sm text-ink-primary outline-none focus:border-focus-ring focus:ring-2 focus:ring-focus-ring/30";
-
 export default function MenuManagementPage() {
   const { showToast, toastHost } = useToast();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [nameDrafts, setNameDrafts] = useState<Record<number, string>>({});
   const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
@@ -56,6 +61,7 @@ export default function MenuManagementPage() {
 
   const [itemSearch, setItemSearch] = useState("");
   const [restockDrafts, setRestockDrafts] = useState<Record<number, string>>({});
+  const [deletingModifier, setDeletingModifier] = useState<Modifier | null>(null);
 
   const [activeTab, setActiveTab] = useState<"category" | "item" | "modifier">("category");
 
@@ -89,7 +95,10 @@ export default function MenuManagementPage() {
   }, []);
 
   useEffect(() => {
-    refreshAll().finally(() => setLoading(false));
+    refreshAll()
+      .then(() => setLoadError(false))
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
   }, [refreshAll]);
 
   async function handleAddCategory(e: React.FormEvent) {
@@ -243,30 +252,22 @@ export default function MenuManagementPage() {
   return (
     <div className="space-y-8">
       {toastHost}
-      <div>
-        <h1 className="display-md text-ink-primary">Menu Management</h1>
-        <p className="body-md mt-1 text-ink-secondary">
-          Manage categories, items, and modifiers. Items are hidden with the availability toggle, never deleted.
-        </p>
-      </div>
+      <PageHeader
+        title="Menu Management"
+        description="Manage categories, items, and modifiers. Items are hidden with the availability toggle, never deleted."
+      />
 
       <SectionCard icon={<IconPlus />} title="Add new" description="Create a category, menu item, or modifier.">
-        <div className="mb-5 flex gap-1 border-b border-border-subtle">
-          {(["category", "item", "modifier"] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 px-4 py-2.5 text-sm font-semibold capitalize transition ${
-                activeTab === tab
-                  ? "border-brand text-brand-strong"
-                  : "border-transparent text-ink-secondary hover:text-ink-primary"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          className="mb-5"
+          tabs={[
+            { value: "category", label: "Category" },
+            { value: "item", label: "Item" },
+            { value: "modifier", label: "Modifier" },
+          ]}
+          value={activeTab}
+          onChange={setActiveTab}
+        />
 
         {activeTab === "category" && (
           <form onSubmit={handleAddCategory} className="flex flex-col gap-3 sm:max-w-md">
@@ -278,7 +279,7 @@ export default function MenuManagementPage() {
               onChange={(e) => setCategorySortOrder(e.target.value)}
               required
             />
-            <Button type="submit" disabled={savingCategory} className="self-start">
+            <Button type="submit" loading={savingCategory} className="self-start">
               Add category
             </Button>
           </form>
@@ -295,8 +296,7 @@ export default function MenuManagementPage() {
               onChange={(e) => setItemPrice(e.target.value)}
               required
             />
-            <select
-              className={selectClass}
+            <Select
               value={itemCategoryId}
               onChange={(e) => setItemCategoryId(e.target.value)}
               required
@@ -309,8 +309,8 @@ export default function MenuManagementPage() {
                   {category.name}
                 </option>
               ))}
-            </select>
-            <Button type="submit" disabled={savingItem} className="self-start">
+            </Select>
+            <Button type="submit" loading={savingItem} className="self-start">
               Add item
             </Button>
           </form>
@@ -318,8 +318,7 @@ export default function MenuManagementPage() {
 
         {activeTab === "modifier" && (
           <form onSubmit={handleAddModifier} className="flex flex-col gap-3 sm:max-w-md">
-            <select
-              className={selectClass}
+            <Select
               value={modifierItemId}
               onChange={(e) => setModifierItemId(e.target.value)}
               required
@@ -332,7 +331,7 @@ export default function MenuManagementPage() {
                   {item.name}
                 </option>
               ))}
-            </select>
+            </Select>
 
             {selectedModifierItem && (
               <div className="rounded-md border border-border-subtle bg-surface-sunken p-3">
@@ -367,7 +366,7 @@ export default function MenuManagementPage() {
               onChange={(e) => setModifierPriceDelta(e.target.value)}
               required
             />
-            <Button type="submit" disabled={savingModifier} className="self-start">
+            <Button type="submit" loading={savingModifier} className="self-start">
               Add modifier
             </Button>
           </form>
@@ -384,11 +383,45 @@ export default function MenuManagementPage() {
         </div>
 
         {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-md bg-surface-sunken" />
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
+                  <th className="py-3 pr-4">Name</th>
+                  <th className="py-3 pr-4">Category</th>
+                  <th className="py-3 pr-4">Price</th>
+                  <th className="py-3 pr-4">Stock</th>
+                  <th className="py-3 pr-4">Status</th>
+                  <th className="py-3 pr-0 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border-subtle last:border-0">
+                    <td className="py-4 pr-4"><Skeleton className="h-4 w-32" /></td>
+                    <td className="py-4 pr-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
+                    <td className="py-4 pr-4"><Skeleton className="h-4 w-16" /></td>
+                    <td className="py-4 pr-4"><Skeleton className="h-4 w-24" /></td>
+                    <td className="py-4 pr-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
+                    <td className="py-4 pr-0"><div className="flex justify-end gap-1.5"><Skeleton className="h-9 w-9 rounded-md" /><Skeleton className="h-9 w-9 rounded-md" /></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        ) : loadError ? (
+          <ErrorState
+            title="Couldn't load menu"
+            description="The menu data didn't come through — check your connection and try again."
+            onRetry={() => {
+              setLoading(true);
+              setLoadError(false);
+              refreshAll()
+                .then(() => setLoadError(false))
+                .catch(() => setLoadError(true))
+                .finally(() => setLoading(false));
+            }}
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
@@ -426,8 +459,7 @@ export default function MenuManagementPage() {
                         </td>
                         <td className="py-4 pr-4">
                           {isEditing ? (
-                            <select
-                              className={selectClass}
+                            <Select
                               value={categoryDraft}
                               onChange={(e) => setCategoryDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
                             >
@@ -436,7 +468,7 @@ export default function MenuManagementPage() {
                                   {category.name}
                                 </option>
                               ))}
-                            </select>
+                            </Select>
                           ) : (
                             <span className="label-sm rounded-pill bg-surface-sunken px-3 py-1 text-ink-secondary normal-case">
                               {item.category.name}
@@ -658,7 +690,7 @@ export default function MenuManagementPage() {
                                             <button
                                               type="button"
                                               aria-label={`Delete modifier ${modifier.name}`}
-                                              onClick={() => handleDeleteModifier(modifier)}
+                                              onClick={() => setDeletingModifier(modifier)}
                                               className="flex h-8 w-8 items-center justify-center rounded-md text-status-danger-ink transition hover:bg-status-danger-tint"
                                             >
                                               <IconTrash className="h-4 w-4" />
@@ -679,8 +711,16 @@ export default function MenuManagementPage() {
                 })}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="body-md py-8 text-center text-ink-faint">
-                      {items.length === 0 ? "No menu items yet." : "No items match your search."}
+                    <td colSpan={6} className="py-4">
+                      <EmptyState
+                        icon={<IconClipboardList />}
+                        title={items.length === 0 ? "No menu items yet" : "No items match your search"}
+                        description={
+                          items.length === 0
+                            ? "Add your first item using the form above and it will appear here."
+                            : "Try a different search term or clear the filter."
+                        }
+                      />
                     </td>
                   </tr>
                 )}
@@ -689,6 +729,19 @@ export default function MenuManagementPage() {
           </div>
         )}
       </SectionCard>
+
+      <ConfirmDialog
+        open={deletingModifier !== null}
+        title={`Delete "${deletingModifier?.name ?? ""}"?`}
+        description="This modifier will be permanently removed from the menu item. This can't be undone."
+        confirmLabel="Delete"
+        tone="danger"
+        onConfirm={() => {
+          if (deletingModifier) handleDeleteModifier(deletingModifier);
+          setDeletingModifier(null);
+        }}
+        onCancel={() => setDeletingModifier(null)}
+      />
     </div>
   );
 }

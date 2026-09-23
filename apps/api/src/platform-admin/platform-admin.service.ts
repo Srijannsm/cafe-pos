@@ -9,6 +9,9 @@ const CAFE_SUMMARY_SELECT = {
   name: true,
   slug: true,
   isActive: true,
+  vatEnabled: true,
+  vatRate: true,
+  panNumber: true,
   createdAt: true,
   _count: { select: { users: true, orders: true } },
 } as const;
@@ -43,6 +46,9 @@ export class PlatformAdminService {
         name: true,
         slug: true,
         isActive: true,
+        vatEnabled: true,
+        vatRate: true,
+        panNumber: true,
         createdAt: true,
         users: {
           select: { id: true, name: true, role: true, isActive: true },
@@ -92,15 +98,22 @@ export class PlatformAdminService {
     });
   }
 
-  async setActive(id: number, dto: UpdateCafeDto) {
+  async updateCafe(id: number, dto: UpdateCafeDto) {
     const cafe = await this.prisma.cafe.findUnique({ where: { id } });
     if (!cafe) {
       throw new NotFoundException(`Cafe ${id} does not exist`);
     }
 
+    // Build a partial update -- only touch the fields the caller actually sent
+    const data: Record<string, unknown> = {};
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.vatEnabled !== undefined) data.vatEnabled = dto.vatEnabled;
+    if (dto.vatRate !== undefined) data.vatRate = dto.vatRate;
+    if ('panNumber' in dto) data.panNumber = dto.panNumber ?? null;
+
     return this.prisma.cafe.update({
       where: { id },
-      data: { isActive: dto.isActive },
+      data,
       select: CAFE_SUMMARY_SELECT,
     });
   }

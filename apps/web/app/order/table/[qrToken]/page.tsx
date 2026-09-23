@@ -3,38 +3,19 @@
 import { useCallback, useEffect, useState, use } from "react";
 import { publicFetchJson } from "../../../../lib/api";
 import { useToast } from "../../../../components/Toast";
-import { IconChevronRight, IconMinus, IconPlus, IconAlert, IconClock, IconFlame, IconCheckCircle } from "../../../../components/icons";
+import { IconClock, IconFlame, IconCheckCircle } from "../../../../components/icons";
+import { lineTotal, groupByCategory, type OrderItemData as OrderItem, type MenuItemData } from "../../../../lib/order-utils";
 import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
+import { ErrorState } from "../../../../components/ui/ErrorState";
+import { FilterPills } from "../../../../components/ui/FilterPills";
+import { InlineAlert } from "../../../../components/ui/InlineAlert";
+import { MenuItemCard } from "../../../../components/ui/MenuItemCard";
 import { PriceDisplay } from "../../../../components/ui/PriceDisplay";
 import { StatusBadge } from "../../../../components/ui/StatusBadge";
+import { Skeleton } from "../../../../components/ui/Skeleton";
 
-type Modifier = {
-  id: number;
-  name: string;
-  priceDelta: string;
-};
-
-type MenuItem = {
-  id: number;
-  name: string;
-  price: string;
-  category: { id: number; name: string };
-  modifiers: Modifier[];
-  isAvailable: boolean;
-  trackStock: boolean;
-  stockQuantity: number;
-  lowStockThreshold: number;
-};
-
-type OrderItem = {
-  id: number;
-  quantity: number;
-  price: string;
-  status: "pending" | "ready" | "served";
-  menuItem: { id: number; name: string };
-  orderItemModifiers: { id: number; modifier: Modifier }[];
-};
+type MenuItem = MenuItemData & { isAvailable: boolean };
 
 type ActiveOrder = {
   id: number;
@@ -64,24 +45,6 @@ const ITEM_STATUS_TONE: Record<OrderItem["status"], "neutral" | "warning" | "suc
   ready: "warning",
   served: "success",
 };
-
-function lineTotal(item: OrderItem): number {
-  const modifierTotal = item.orderItemModifiers.reduce(
-    (sum, oim) => sum + Number(oim.modifier.priceDelta),
-    0,
-  );
-  return (Number(item.price) + modifierTotal) * item.quantity;
-}
-
-function groupByCategory(menu: MenuItem[]): [string, MenuItem[]][] {
-  const groups = new Map<string, MenuItem[]>();
-  for (const item of menu) {
-    const key = item.category.name;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(item);
-  }
-  return Array.from(groups.entries());
-}
 
 export default function PublicOrderPage({ params }: { params: Promise<{ qrToken: string }> }) {
   const { qrToken } = use(params);
@@ -185,11 +148,15 @@ export default function PublicOrderPage({ params }: { params: Promise<{ qrToken:
   if (loadError) {
     return (
       <main className="flex min-h-screen items-center justify-center p-6">
-        <Card className="max-w-sm text-center">
-          <IconAlert className="mx-auto mb-3 h-8 w-8 text-status-danger-ink" />
-          <p className="body-md text-ink-primary">{loadError}</p>
-          <p className="body-sm mt-2 text-ink-secondary">Please ask a staff member for help.</p>
-        </Card>
+        <ErrorState
+          title={loadError}
+          description="Please ask a staff member for help."
+          onRetry={() => {
+            setLoadError("");
+            setLoading(true);
+            refresh().finally(() => setLoading(false));
+          }}
+        />
       </main>
     );
   }
@@ -198,9 +165,13 @@ export default function PublicOrderPage({ params }: { params: Promise<{ qrToken:
     return (
       <main className="min-h-screen p-4 sm:p-6">
         <div className="mx-auto max-w-3xl space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-14 animate-pulse rounded-md bg-surface-sunken" />
-          ))}
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-7 w-40" />
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} variant="rect" className="h-14 w-full rounded-md" />
+            ))}
+          </div>
         </div>
       </main>
     );
@@ -223,10 +194,9 @@ export default function PublicOrderPage({ params }: { params: Promise<{ qrToken:
       </div>
 
       {justSubmitted && (
-        <div className="mb-6 flex items-center gap-2 rounded-md bg-status-success-tint px-4 py-3 text-status-success-ink">
-          <IconCheckCircle className="h-5 w-5 shrink-0" />
-          <p className="body-sm">Your order was sent. A staff member will confirm it shortly.</p>
-        </div>
+        <InlineAlert tone="success" icon={<IconCheckCircle className="h-5 w-5 shrink-0" />} className="mb-6" onDismiss={() => setJustSubmitted(false)}>
+          Your order was sent. A staff member will confirm it shortly.
+        </InlineAlert>
       )}
 
       {data.activeOrder && data.activeOrder.orderItems.length > 0 && (
@@ -273,119 +243,31 @@ export default function PublicOrderPage({ params }: { params: Promise<{ qrToken:
         <section>
           <h2 className="heading-lg mb-4 text-ink-primary">Menu</h2>
 
-          <div className="mb-4 flex flex-wrap gap-2">
-            {categories.map(([categoryName]) => (
-              <button
-                key={categoryName}
-                type="button"
-                onClick={() => setActiveCategory(categoryName)}
-                className={`rounded-pill px-4 py-2 font-body text-sm font-semibold transition ${
-                  currentCategory === categoryName
-                    ? "bg-brand text-on-brand"
-                    : "border border-border-subtle bg-surface-raised text-ink-secondary hover:bg-surface-sunken"
-                }`}
-              >
-                {categoryName}
-              </button>
-            ))}
-          </div>
+          {categories.length > 0 && currentCategory != null && (
+            <div className="mb-4">
+              <FilterPills
+                options={categories.map(([name]) => name)}
+                value={currentCategory}
+                onChange={setActiveCategory}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-            {itemsToShow.map((item) => {
-              const isSelected = selectedItemId === item.id;
-              const outOfStock = item.trackStock && item.stockQuantity <= 0;
-              const lowStock = item.trackStock && !outOfStock && item.stockQuantity <= item.lowStockThreshold;
-              const selectedPrice =
-                (Number(item.price) +
-                  item.modifiers
-                    .filter((m) => selectedModifierIds.includes(m.id))
-                    .reduce((s, m) => s + Number(m.priceDelta), 0)) *
-                quantity;
-
-              return (
-                <Card
-                  key={item.id}
-                  className={`${isSelected ? "sm:col-span-2" : ""} ${outOfStock ? "opacity-50" : ""}`}
-                >
-                  <button
-                    onClick={() => selectItem(item)}
-                    disabled={outOfStock}
-                    className="flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed"
-                  >
-                    <span className="body-md font-semibold text-ink-primary">{item.name}</span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      {outOfStock ? (
-                        <span className="label-sm font-semibold text-status-danger-ink">Out of stock</span>
-                      ) : (
-                        <>
-                          {lowStock && (
-                            <span className="label-sm text-status-warning-ink">{item.stockQuantity} left</span>
-                          )}
-                          <PriceDisplay amount={item.price} />
-                        </>
-                      )}
-                      <IconChevronRight
-                        className={`h-4 w-4 text-ink-faint transition-transform ${isSelected ? "rotate-90" : ""}`}
-                      />
-                    </span>
-                  </button>
-
-                  {isSelected && (
-                    <div className="animate-card-in mt-4 flex flex-col gap-4 border-t border-border-subtle pt-4">
-                      {item.modifiers.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {item.modifiers.map((modifier) => {
-                            const active = selectedModifierIds.includes(modifier.id);
-                            return (
-                              <button
-                                key={modifier.id}
-                                type="button"
-                                onClick={() => toggleModifier(modifier.id)}
-                                className={`rounded-pill border-2 px-3 py-1.5 body-sm font-semibold transition ${
-                                  active
-                                    ? "border-brand bg-brand-tint text-brand-strong"
-                                    : "border-border-subtle bg-surface-raised text-ink-secondary hover:border-border-strong"
-                                }`}
-                              >
-                                {modifier.name} +Rs. {modifier.priceDelta}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            aria-label="Decrease quantity"
-                            onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                            className="flex h-9 w-9 items-center justify-center rounded-md border border-border-subtle text-ink-secondary hover:bg-surface-sunken"
-                          >
-                            <IconMinus className="h-4 w-4" />
-                          </button>
-                          <span className="body-md w-6 text-center font-semibold text-ink-primary">{quantity}</span>
-                          <button
-                            type="button"
-                            aria-label="Increase quantity"
-                            onClick={() =>
-                              setQuantity((q) => (item.trackStock ? Math.min(item.stockQuantity, q + 1) : q + 1))
-                            }
-                            disabled={item.trackStock && quantity >= item.stockQuantity}
-                            className="flex h-9 w-9 items-center justify-center rounded-md border border-border-subtle text-ink-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <IconPlus className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <Button type="button" onClick={() => addToCart(item)}>
-                          Add · <PriceDisplay amount={selectedPrice} />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
+            {itemsToShow.map((item) => (
+              <MenuItemCard
+                key={item.id}
+                item={item}
+                selected={selectedItemId === item.id}
+                quantity={quantity}
+                selectedModifierIds={selectedModifierIds}
+                onSelect={selectItem}
+                onToggleModifier={toggleModifier}
+                onQuantityChange={setQuantity}
+                onAdd={addToCart}
+                size="compact"
+              />
+            ))}
           </div>
         </section>
       )}
@@ -416,14 +298,14 @@ export default function PublicOrderPage({ params }: { params: Promise<{ qrToken:
                 </div>
               ))}
             </div>
-            {submitError && <p className="body-sm mb-2 text-status-danger-ink">{submitError}</p>}
+            {submitError && <InlineAlert className="mb-2">{submitError}</InlineAlert>}
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="label-sm text-ink-faint">Total</p>
                 <PriceDisplay amount={cartTotal} size="lg" />
               </div>
-              <Button size="large" onClick={handleSubmitCart} disabled={submitting}>
-                {submitting ? "Sending…" : "Send order to staff"}
+              <Button size="large" onClick={handleSubmitCart} loading={submitting}>
+                Send order to staff
               </Button>
             </div>
           </div>

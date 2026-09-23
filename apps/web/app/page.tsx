@@ -2,13 +2,20 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { apiFetchJson, getCurrentUser } from "../lib/api";
 import { useRequireAuth } from "../lib/useRequireAuth";
 import { NavBar } from "../components/NavBar";
-import { IconAlert, IconInbox } from "../components/icons";
+import { IconInbox } from "../components/icons";
 import { Input } from "../components/ui/Input";
 import { TableTile } from "../components/ui/TableTile";
 import { StatusBadge } from "../components/ui/StatusBadge";
+import { Skeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
+import { ErrorState } from "../components/ui/ErrorState";
+import { Button } from "../components/ui/Button";
+import { FilterPills } from "../components/ui/FilterPills";
+import { InlineAlert } from "../components/ui/InlineAlert";
 
 type Table = {
   id: number;
@@ -41,12 +48,26 @@ export default function Home() {
   const ready = useRequireAuth();
   const [tables, setTables] = useState<Table[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("All");
+  // Read client-side only (mirrors NavBar's own pattern) — getCurrentUser()
+  // touches localStorage, which doesn't exist during this client component's
+  // server-rendered first pass.
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const loadTables = useCallback(() => {
-    return apiFetchJson<Table[]>("/tables").then(setTables);
+    return apiFetchJson<Table[]>("/tables")
+      .then((res) => {
+        setTables(res);
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true));
+  }, []);
+
+  useEffect(() => {
+    setIsAdmin(getCurrentUser()?.role === "admin");
   }, []);
 
   useEffect(() => {
@@ -96,6 +117,20 @@ export default function Home() {
     }
   }
 
+  // Counts are off the full table list (not the filtered one) so a filter
+  // pill's badge always reflects "how many are in that state right now",
+  // not "how many are visible after search" — otherwise picking "Occupied"
+  // would make every other pill's count disappear along with the rows.
+  const statusCounts = useMemo(() => {
+    return tables.reduce(
+      (acc, table) => {
+        acc[table.status] += 1;
+        return acc;
+      },
+      { free: 0, occupied: 0, reserved: 0 } as Record<Table["status"], number>,
+    );
+  }, [tables]);
+
   const filteredTables = useMemo(() => {
     return tables.filter((table) => {
       if (filter !== "All" && table.status !== filter.toLowerCase()) return false;
@@ -105,7 +140,7 @@ export default function Home() {
   }, [tables, filter, search]);
 
   return (
-    <main className="min-h-screen">
+    <main id="main-content" className="min-h-screen">
       <NavBar />
       <div className="p-4 sm:p-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -116,44 +151,69 @@ export default function Home() {
           <div className="w-full max-w-xs">
             <Input pill placeholder="Search tables…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFilter(f)}
-                className={`rounded-pill px-4 py-2 font-body text-sm font-semibold transition ${
-                  filter === f
-                    ? "bg-brand text-on-brand"
-                    : "border border-border-subtle bg-surface-raised text-ink-secondary hover:bg-surface-sunken"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
+          <FilterPills
+            options={FILTERS}
+            value={filter}
+            onChange={setFilter}
+            renderLabel={(f) => {
+              const count = f === "All" ? tables.length : statusCounts[f.toLowerCase() as Table["status"]];
+              return `${f} (${count})`;
+            }}
+          />
         </div>
 
         {message && (
-          <div className="animate-card-in mb-4 flex items-center gap-2 rounded-md bg-status-danger-tint px-4 py-3 body-md text-status-danger-ink">
-            <IconAlert className="h-5 w-5 shrink-0" />
+          <InlineAlert className="mb-4" onDismiss={() => setMessage("")}>
             {message}
-          </div>
+          </InlineAlert>
         )}
 
         {!ready || loading ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="aspect-square animate-pulse rounded-xl bg-surface-sunken" />
+              <Skeleton key={i} variant="rect" className="aspect-square h-auto w-full rounded-xl" />
             ))}
           </div>
+        ) : loadError ? (
+          <ErrorState
+            title="Couldn't load tables"
+            description="The tables list didn't come through — check your connection and try again."
+            onRetry={() => {
+              setLoading(true);
+              loadTables().finally(() => setLoading(false));
+            }}
+          />
         ) : filteredTables.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border-strong bg-surface-raised py-16 text-center">
-            <IconInbox className="h-10 w-10 text-ink-faint" />
-            <p className="body-md text-ink-secondary">
-              {tables.length === 0 ? "No tables configured yet." : "No tables match your search."}
-            </p>
-          </div>
+          <EmptyState
+            icon={<IconInbox className="h-6 w-6" />}
+            title={tables.length === 0 ? "No tables set up yet" : `No ${filter.toLowerCase()} tables`}
+            description={
+              tables.length === 0
+                ? isAdmin
+                  ? "Add your first table to start seating guests."
+                  : "Ask an admin to set up tables before you can seat guests."
+                : "Try a different filter or clear your search."
+            }
+            action={
+              tables.length === 0 ? (
+                isAdmin && (
+                  <Link href="/admin/tables">
+                    <Button variant="secondary">Go to Admin Tables</Button>
+                  </Link>
+                )
+              ) : (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setFilter("All");
+                    setSearch("");
+                  }}
+                >
+                  Clear filter
+                </Button>
+              )
+            }
+          />
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {filteredTables.map((table) => {

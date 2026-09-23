@@ -31,6 +31,6 @@ export class PlatformAdminController {
 
   @Patch('cafes/:id')
   setActive(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCafeDto) {
-    return this.platformAdminService.setActive(id, dto);
+    return this.platformAdminService.updateCafe(id, dto);
   }
 }

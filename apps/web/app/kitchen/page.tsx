@@ -5,10 +5,13 @@ import { apiFetchJson } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
 import { useOrdersSocket } from "../../lib/useOrdersSocket";
 import { NavBar } from "../../components/NavBar";
-import { IconClock, IconInbox } from "../../components/icons";
+import { IconClock, IconInbox, IconAlert } from "../../components/icons";
 import { Card } from "../../components/ui/Card";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Button } from "../../components/ui/Button";
+import { Skeleton } from "../../components/ui/Skeleton";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { ErrorState } from "../../components/ui/ErrorState";
 
 type OrderItem = {
   id: number;
@@ -39,9 +42,26 @@ export default function KitchenPage() {
   const ready = useRequireAuth();
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [, setTick] = useState(0); // drives per-second re-render for live timers
+  const [exitingIds, setExitingIds] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const loadOrders = useCallback(() => {
-    return apiFetchJson<KitchenOrder[]>("/orders?status=preparing").then(setOrders);
+    return apiFetchJson<KitchenOrder[]>("/orders?status=preparing")
+      .then((res) => {
+        // Don't restore cards that are in the middle of their exit animation
+        setExitingIds((exiting) => {
+          setOrders(res.filter((o) => !exiting.has(o.id)));
+          return exiting;
+        });
+        setLoadError(false);
+      })
+      .catch(() => setLoadError(true));
   }, []);
 
   useEffect(() => {
@@ -53,43 +73,85 @@ export default function KitchenPage() {
 
   // Push: a waiter's "Send to Kitchen" shows up here immediately instead of
   // waiting for the next 5s poll. The poll above stays as a fallback.
-  useOrdersSocket(ready, {
+  const { connected } = useOrdersSocket(ready, {
     onSentToKitchen: () => loadOrders(),
   });
 
   async function markReady(orderItemId: number) {
-    setOrders((current) =>
-      current.map((order) => ({
+    // Optimistically update item status
+    setOrders((current) => {
+      const updated = current.map((order) => ({
         ...order,
         orderItems: order.orderItems.map((item) =>
           item.id === orderItemId ? { ...item, status: "ready" as const } : item,
         ),
-      })),
-    );
+      }));
+      // If all items on this order are now ready, trigger slide-out animation
+      for (const order of updated) {
+        const allReady = order.orderItems.length > 0 && order.orderItems.every((i) => i.status === "ready");
+        if (allReady && order.orderItems.some((i) => i.id === orderItemId)) {
+          setExitingIds((prev) => new Set([...prev, order.id]));
+          // Remove from list after animation completes
+          setTimeout(() => {
+            setOrders((curr) => curr.filter((o) => o.id !== order.id));
+            setExitingIds((prev) => { const s = new Set(prev); s.delete(order.id); return s; });
+          }, 400);
+        }
+      }
+      return updated;
+    });
     try {
       await apiFetchJson(`/orders/items/${orderItemId}/ready`, { method: "PATCH" });
     } finally {
-      loadOrders();
+      // Delay refresh so exiting cards finish their slide-out before the poll
+      // can restore them. The 5s interval + socket handles fresh orders anyway.
+      setTimeout(loadOrders, 500);
     }
   }
 
   return (
-    <main data-theme="dark" className="min-h-screen bg-surface-canvas">
+    <main id="main-content" data-theme="dark" className="min-h-screen bg-surface-canvas">
       <NavBar />
       <div className="p-4 sm:p-6">
-        <h1 className="display-md mb-6 text-ink-primary">Kitchen</h1>
+        <h1 className="display-md mb-4 text-ink-primary">Kitchen</h1>
+
+        {ready && !connected && (
+          <div className="mb-5 flex items-center gap-2 rounded-lg border border-status-warning bg-status-warning-tint px-4 py-3 text-sm font-medium text-status-warning-ink">
+            <IconAlert className="h-4 w-4 shrink-0" />
+            Live updates disconnected — new orders will still appear every 5 seconds.
+          </div>
+        )}
 
         {!ready || initialLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-48 animate-pulse rounded-lg bg-surface-sunken" />
+              <div key={i} className="rounded-lg border border-border-subtle bg-surface-raised p-4">
+                <div className="mb-4 flex items-center justify-between">
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-5 w-16 rounded-pill" />
+                </div>
+                <div className="space-y-2">
+                  <Skeleton variant="rect" className="h-20 w-full rounded-md" />
+                  <Skeleton variant="rect" className="h-20 w-full rounded-md" />
+                </div>
+              </div>
             ))}
           </div>
+        ) : loadError ? (
+          <ErrorState
+            title="Couldn't load orders"
+            description="The kitchen queue didn't come through — check your connection and try again."
+            onRetry={() => {
+              setInitialLoading(true);
+              loadOrders().finally(() => setInitialLoading(false));
+            }}
+          />
         ) : orders.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border-strong bg-surface-raised py-20 text-center">
-            <IconInbox className="h-12 w-12 text-ink-faint" />
-            <p className="body-lg text-ink-secondary">No orders in the kitchen right now.</p>
-          </div>
+          <EmptyState
+            icon={<IconInbox className="h-6 w-6" />}
+            title="No orders in the kitchen right now"
+            description="Orders will show up here once a waiter sends them to the kitchen."
+          />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {orders.map((order) => {
@@ -99,6 +161,7 @@ export default function KitchenPage() {
                 <Card
                   key={order.id}
                   tone={level === "none" ? undefined : level}
+                  className={exitingIds.has(order.id) ? "animate-slide-out-left opacity-0 transition-opacity duration-400" : "animate-card-in"}
                   title={
                     <>
                       {order.table.tableNumber} <span className="text-ink-faint">#{order.id}</span>

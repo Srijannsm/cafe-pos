@@ -42,6 +42,32 @@
   --shadow-elevation-sm: 0 1px 2px rgba(42, 38, 32, 0.06);
   --shadow-elevation-md: 0 4px 14px rgba(42, 38, 32, 0.1);
   --shadow-elevation-lg: 0 16px 36px rgba(42, 38, 32, 0.16);
+
+  /* --- avatar tones (staff login, user displays) — derived from the
+     status/brand palette via color-mix so they automatically stay
+     in the same family as the rest of the UI instead of being five
+     more hardcoded hex values to keep in sync by hand. --- */
+  --avatar-1: color-mix(in srgb, var(--status-info) 15%, var(--surface-raised));
+  --avatar-1-ink: var(--status-info-ink);
+  --avatar-2: color-mix(in srgb, var(--status-success) 15%, var(--surface-raised));
+  --avatar-2-ink: var(--status-success-ink);
+  --avatar-3: color-mix(in srgb, var(--status-warning) 15%, var(--surface-raised));
+  --avatar-3-ink: var(--status-warning-ink);
+  --avatar-4: color-mix(in srgb, var(--status-danger) 15%, var(--surface-raised));
+  --avatar-4-ink: var(--status-danger-ink);
+  --avatar-5: color-mix(in srgb, var(--brand) 15%, var(--surface-raised));
+  --avatar-5-ink: var(--brand-strong);
+
+  /* --- skeleton loading --- */
+  --skeleton-base: var(--surface-sunken);
+  --skeleton-shine: color-mix(in srgb, var(--surface-sunken) 80%, var(--surface-raised));
+
+  /* --- overlay backdrop (modals, dialogs) --- */
+  --overlay-backdrop: rgba(42, 38, 32, 0.5);
+
+  /* --- interactive states --- */
+  --surface-hover: color-mix(in srgb, var(--surface-sunken) 50%, var(--surface-raised));
+  --surface-pressed: var(--surface-sunken);
 }
 
 [data-theme="dark"] {
@@ -78,6 +104,31 @@
   --shadow-elevation-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-elevation-md: 0 4px 14px rgba(0, 0, 0, 0.45);
   --shadow-elevation-lg: 0 16px 36px rgba(0, 0, 0, 0.55);
+
+  /* Recomputed here rather than inherited from :root: color-mix()'s
+     result is fixed at the point --avatar-1 etc. are declared, using
+     whatever --status-info/--surface-raised resolve to in *that* scope.
+     Redeclaring them here (now reading the dark values just above) is
+     what makes them dark-aware too, same reasoning as the --color-*
+     aliases redeclared below. */
+  --avatar-1: color-mix(in srgb, var(--status-info) 15%, var(--surface-raised));
+  --avatar-1-ink: var(--status-info-ink);
+  --avatar-2: color-mix(in srgb, var(--status-success) 15%, var(--surface-raised));
+  --avatar-2-ink: var(--status-success-ink);
+  --avatar-3: color-mix(in srgb, var(--status-warning) 15%, var(--surface-raised));
+  --avatar-3-ink: var(--status-warning-ink);
+  --avatar-4: color-mix(in srgb, var(--status-danger) 15%, var(--surface-raised));
+  --avatar-4-ink: var(--status-danger-ink);
+  --avatar-5: color-mix(in srgb, var(--brand) 15%, var(--surface-raised));
+  --avatar-5-ink: var(--brand-strong);
+
+  --skeleton-base: var(--surface-sunken);
+  --skeleton-shine: color-mix(in srgb, var(--surface-sunken) 80%, var(--surface-raised));
+
+  --overlay-backdrop: rgba(0, 0, 0, 0.6);
+
+  --surface-hover: color-mix(in srgb, var(--surface-sunken) 50%, var(--surface-raised));
+  --surface-pressed: var(--surface-sunken);
 
   /* Tailwind's utility classes (bg-surface-canvas, text-ink-primary, and so
      on) read the color and shadow aliases below, not the raw tokens above
@@ -118,6 +169,23 @@
   --color-status-danger-tint: var(--status-danger-tint);
   --color-status-danger-ink: var(--status-danger-ink);
 
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-1-ink: var(--avatar-1-ink);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-2-ink: var(--avatar-2-ink);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-3-ink: var(--avatar-3-ink);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-4-ink: var(--avatar-4-ink);
+  --color-avatar-5: var(--avatar-5);
+  --color-avatar-5-ink: var(--avatar-5-ink);
+
+  --color-skeleton-base: var(--skeleton-base);
+  --color-skeleton-shine: var(--skeleton-shine);
+  --color-overlay-backdrop: var(--overlay-backdrop);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-pressed: var(--surface-pressed);
+
   --shadow-sm: var(--shadow-elevation-sm);
   --shadow-md: var(--shadow-elevation-md);
   --shadow-lg: var(--shadow-elevation-lg);
@@ -128,6 +196,11 @@
   --animate-card-in: card-in 250ms ease-out;
   --animate-pop: pop 200ms ease-out;
   --animate-shake: shake 320ms ease-in-out;
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-slide-in-right: slide-in-right 200ms ease-out;
+  --animate-slide-out-left: slide-out-left 200ms ease-in;
+  --animate-pulse-glow: pulse-glow 900ms ease-out;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
 
   /* --- new design system tokens --- */
   --color-surface-canvas: var(--surface-canvas);
@@ -159,6 +232,23 @@
   --color-status-danger: var(--status-danger);
   --color-status-danger-tint: var(--status-danger-tint);
   --color-status-danger-ink: var(--status-danger-ink);
+
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-1-ink: var(--avatar-1-ink);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-2-ink: var(--avatar-2-ink);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-3-ink: var(--avatar-3-ink);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-4-ink: var(--avatar-4-ink);
+  --color-avatar-5: var(--avatar-5);
+  --color-avatar-5-ink: var(--avatar-5-ink);
+
+  --color-skeleton-base: var(--skeleton-base);
+  --color-skeleton-shine: var(--skeleton-shine);
+  --color-overlay-backdrop: var(--overlay-backdrop);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-pressed: var(--surface-pressed);
 
   /* radius scale — overrides Tailwind's defaults to match the spec */
   --radius-sm: 6px;
@@ -226,6 +316,61 @@
   40%,
   80% {
     transform: translateX(6px);
+  }
+}
+
+/* fade in — modals, overlays */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* slide in from right — cart items appearing */
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* slide out left — kitchen bump when an item is marked done */
+@keyframes slide-out-left {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+
+/* pulse glow — status changes (e.g. a table flips free/occupied) */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 25%, transparent);
+  }
+}
+
+/* skeleton shimmer */
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
   }
 }
 

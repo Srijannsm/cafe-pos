@@ -5,45 +5,27 @@ import Link from "next/link";
 import { apiFetchJson } from "../../lib/api";
 import { IconClipboardList, IconTable, IconChevronRight } from "../../components/icons";
 import { Card } from "../../components/ui/Card";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { StatCard, StatSkeleton } from "../../components/ui/StatCard";
+import { ErrorState } from "../../components/ui/ErrorState";
 
 type MenuItem = { isAvailable: boolean };
 type TableRow = { status: "free" | "occupied" | "reserved" };
-
-function StatCard({
-  label,
-  value,
-  caption,
-  captionTone,
-}: {
-  label: string;
-  value: number;
-  caption?: string;
-  captionTone?: "success" | "warning";
-}) {
-  return (
-    <Card>
-      <p className="label-md text-ink-secondary">{label}</p>
-      <p className="display-md mt-2 text-ink-primary">{value}</p>
-      {caption && (
-        <p className={`body-sm mt-1 ${captionTone === "warning" ? "text-status-warning-ink" : "text-status-success-ink"}`}>
-          {caption}
-        </p>
-      )}
-    </Card>
-  );
-}
 
 export default function AdminDashboardPage() {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [tables, setTables] = useState<TableRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     Promise.all([apiFetchJson<MenuItem[]>("/menu/all"), apiFetchJson<TableRow[]>("/tables")])
       .then(([itemsRes, tablesRes]) => {
         setItems(itemsRes);
         setTables(tablesRes);
+        setLoadError(false);
       })
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -54,17 +36,31 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="display-md text-ink-primary">Dashboard</h1>
-        <p className="body-md mt-1 text-ink-secondary">An overview of the menu and tables.</p>
-      </div>
+      <PageHeader title="Dashboard" description="An overview of the menu and tables." />
 
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-lg bg-surface-sunken" />
+            <StatSkeleton key={i} />
           ))}
         </div>
+      ) : loadError ? (
+        <ErrorState
+          title="Couldn't load dashboard"
+          description="The stats didn't come through — check your connection and try again."
+          onRetry={() => {
+            setLoading(true);
+            setLoadError(false);
+            Promise.all([apiFetchJson<MenuItem[]>("/menu/all"), apiFetchJson<TableRow[]>("/tables")])
+              .then(([itemsRes, tablesRes]) => {
+                setItems(itemsRes);
+                setTables(tablesRes);
+                setLoadError(false);
+              })
+              .catch(() => setLoadError(true))
+              .finally(() => setLoading(false));
+          }}
+        />
       ) : (
         <>
           <div>

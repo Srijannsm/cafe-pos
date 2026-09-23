@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
-import { ReportsQueryDto } from './dto/reports-query.dto.js';
+import { ReportsQueryDto, GroupBy } from './dto/reports-query.dto.js';
 
 const DEFAULT_RANGE_DAYS = 30;
 
@@ -55,8 +55,27 @@ export class ReportsService {
     };
   }
 
-  async getRevenueByDay(cafeId: number, dto: ReportsQueryDto) {
+  // Returns a bucket key for a given date based on the groupBy period.
+  // All keys are ISO-formatted so the frontend can sort/display them easily.
+  private bucketKey(date: Date, groupBy: GroupBy): string {
+    const iso = date.toISOString();
+    if (groupBy === 'day') return iso.slice(0, 10); // YYYY-MM-DD
+    if (groupBy === 'month') return iso.slice(0, 7); // YYYY-MM
+    if (groupBy === 'year') return iso.slice(0, 4);  // YYYY
+    // week: return the Monday of the ISO week (YYYY-Www)
+    const d = new Date(date);
+    const day = d.getUTCDay(); // 0=Sun
+    const diff = day === 0 ? -6 : 1 - day; // shift to Monday
+    d.setUTCDate(d.getUTCDate() + diff);
+    const year = d.getUTCFullYear();
+    const startOfYear = new Date(Date.UTC(year, 0, 1));
+    const weekNo = Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getUTCDay() + 1) / 7);
+    return `${year}-W${String(weekNo).padStart(2, '0')}`;
+  }
+
+  async getRevenueByPeriod(cafeId: number, dto: ReportsQueryDto) {
     const { from, to } = this.resolveRange(dto);
+    const groupBy: GroupBy = dto.groupBy ?? 'day';
 
     const payments = await this.prisma.payment.findMany({
       where: { paidAt: { gte: from, lte: to }, order: { cafeId } },
@@ -64,17 +83,18 @@ export class ReportsService {
       orderBy: { paidAt: 'asc' },
     });
 
-    const byDay = new Map<string, { revenue: Prisma.Decimal; orders: number }>();
+    const byPeriod = new Map<string, { revenue: Prisma.Decimal; orders: number }>();
     for (const payment of payments) {
-      const day = payment.paidAt.toISOString().slice(0, 10);
-      const bucket = byDay.get(day) ?? { revenue: new Prisma.Decimal(0), orders: 0 };
+      const key = this.bucketKey(payment.paidAt, groupBy);
+      const bucket = byPeriod.get(key) ?? { revenue: new Prisma.Decimal(0), orders: 0 };
       bucket.revenue = bucket.revenue.plus(payment.amount);
       bucket.orders += 1;
-      byDay.set(day, bucket);
+      byPeriod.set(key, bucket);
     }
 
-    return [...byDay.entries()].map(([date, bucket]) => ({
-      date,
+    return [...byPeriod.entries()].map(([period, bucket]) => ({
+      period,
+      groupBy,
       revenue: bucket.revenue.toFixed(2),
       orders: bucket.orders,
     }));
@@ -149,5 +169,23 @@ export class ReportsService {
       amount: bucket.amount.toFixed(2),
       count: bucket.count,
     }));
+  }
+
+  async getDailyReport(cafeId: number, date: string) {
+    // Build a full-day range for the given date (UTC, consistent with resolveRange)
+    const from = new Date(date);
+    from.setUTCHours(0, 0, 0, 0);
+    const to = new Date(date);
+    to.setUTCHours(23, 59, 59, 999);
+
+    const dto = { from: from.toISOString(), to: to.toISOString() };
+
+    const [summary, topItems, paymentMethods] = await Promise.all([
+      this.getSummary(cafeId, dto),
+      this.getTopItems(cafeId, dto, 20),
+      this.getPaymentMethods(cafeId, dto),
+    ]);
+
+    return { date, summary, topItems, paymentMethods };
   }
 }

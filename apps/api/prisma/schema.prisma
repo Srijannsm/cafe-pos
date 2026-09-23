@@ -78,6 +78,14 @@ model Cafe {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  // VAT settings -- opt-in per cafe. Non-VAT cafes leave vatEnabled false
+  // and the billing/receipt logic stays exactly as before. VAT-registered
+  // cafes set vatEnabled true, vatRate (default 13 for Nepal), and panNumber.
+  vatEnabled Boolean  @default(false)
+  vatRate    Decimal  @default(13)
+  panNumber      String?
+  lastBillNumber Int     @default(0)
+
   users          User[]
   tables         RestaurantTable[]
   menuCategories MenuCategory[]
@@ -185,6 +193,10 @@ model Order {
   orderType OrderType
   status    OrderStatus @default(pending)
   total     Decimal?
+  // Set at bill-generation time. Only populated when cafe.vatEnabled.
+  subtotal  Decimal?
+  vatAmount  Decimal?
+  billNumber Int?
   createdAt DateTime    @default(now())
   tableId   Int
   // Nullable: a customer placing their own order via table QR has no
@@ -192,6 +204,7 @@ model Order {
   // exactly the same either way -- staff still confirm, cook, serve, and
   // bill it through the normal flow.
   waiterId  Int?
+  notes     String?
 
   cafe       Cafe            @relation(fields: [cafeId], references: [id])
   table      RestaurantTable @relation(fields: [tableId], references: [id])

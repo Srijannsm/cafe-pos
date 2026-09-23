@@ -1,8 +1,9 @@
-import { Body, Controller, Post, Param, ParseIntPipe, Patch, UseGuards, Get, Query } from '@nestjs/common';
+import { Body, Controller, Post, Param, ParseIntPipe, Patch, Delete, UseGuards, Get, Query } from '@nestjs/common';
 import { OrdersService } from './orders.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
 import { RecordPaymentDto } from './dto/record-payment.dto.js';
+import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -36,6 +37,13 @@ export class OrdersController {
     @Body() dto: AddOrderDto,
   ) {
     return this.ordersService.addItem(user.cafeId, orderId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin')
+  @Delete('items/:orderItemId')
+  removeItem(@CurrentUser() user: CurrentUserPayload, @Param('orderItemId', ParseIntPipe) orderItemId: number) {
+    return this.ordersService.removeItem(user.cafeId, orderItemId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -96,5 +104,17 @@ export class OrdersController {
 findOne(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe) orderId: number) {
   return this.ordersService.findOne(user.cafeId, orderId);
 }
+
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin')
+  @Patch(':orderId/notes')
+  updateNotes(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Body() dto: UpdateOrderNotesDto,
+  ) {
+    return this.ordersService.updateNotes(user.cafeId, orderId, dto);
+  }
 
 }

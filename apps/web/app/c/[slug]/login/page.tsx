@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { apiFetchJson, setCafeSlug } from "../../../../lib/api";
 import { NumericKeypad } from "../../../../components/NumericKeypad";
+import { InlineAlert } from "../../../../components/ui/InlineAlert";
+import { Skeleton } from "../../../../components/ui/Skeleton";
 
 type StaffOption = {
   id: number;
@@ -18,11 +20,11 @@ type CafeInfo = {
 };
 
 const AVATAR_TONES = [
-  "bg-orange-100 text-orange-800",
-  "bg-blue-100 text-blue-800",
-  "bg-emerald-100 text-emerald-800",
-  "bg-violet-100 text-violet-800",
-  "bg-rose-100 text-rose-800",
+  "bg-avatar-1 text-avatar-1-ink",
+  "bg-avatar-2 text-avatar-2-ink",
+  "bg-avatar-3 text-avatar-3-ink",
+  "bg-avatar-4 text-avatar-4-ink",
+  "bg-avatar-5 text-avatar-5-ink",
 ];
 
 function toneFor(id: number) {
@@ -119,7 +121,7 @@ export default function CafeLoginPage() {
       {loadingStaff ? (
         <div className="flex flex-wrap justify-center gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 w-28 animate-pulse rounded-xl bg-surface-sunken" />
+            <Skeleton key={i} variant="rect" className="h-28 w-28 rounded-xl" />
           ))}
         </div>
       ) : (
@@ -165,9 +167,7 @@ export default function CafeLoginPage() {
           />
 
           {error && (
-            <p className="body-md rounded-md bg-status-danger-tint px-3 py-2 font-medium text-status-danger-ink">
-              {error}
-            </p>
+            <InlineAlert>{error}</InlineAlert>
           )}
         </div>
       )}

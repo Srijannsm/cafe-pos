@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { platformLogin } from "../../../lib/api";
 import { IconKey } from "../../../components/icons";
-import { Input } from "../../../components/ui/Input";
 import { Button } from "../../../components/ui/Button";
+import { InlineAlert } from "../../../components/ui/InlineAlert";
+import { Input } from "../../../components/ui/Input";
 
 export default function PlatformLoginPage() {
   const router = useRouter();
@@ -52,11 +53,7 @@ export default function PlatformLoginPage() {
           />
         </div>
 
-        {error && (
-          <p className="body-md rounded-md bg-status-danger-tint px-3 py-2 font-medium text-status-danger-ink">
-            {error}
-          </p>
-        )}
+        {error && <InlineAlert>{error}</InlineAlert>}
 
         <Button type="submit" disabled={submitting || !username || !password}>
           {submitting ? "Signing in…" : "Sign in"}

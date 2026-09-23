@@ -10,10 +10,13 @@ import {
   platformLogout,
 } from "../../lib/api";
 import { useToast } from "../../components/Toast";
-import { IconGrid, IconPlus, IconLogout, IconUsers, IconClipboardList, IconBanknote } from "../../components/icons";
+import { IconPlus, IconLogout, IconBanknote } from "../../components/icons";
 import { SectionCard } from "../admin/_components/SectionCard";
-import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
+import { DataTable, type Column } from "../../components/ui/DataTable";
+import { Input } from "../../components/ui/Input";
+import { Skeleton } from "../../components/ui/Skeleton";
+import { StatCard, StatSkeleton } from "../../components/ui/StatCard";
 
 type CafeRow = {
   id: number;
@@ -39,19 +42,13 @@ function slugify(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
-  return (
-    <div className="flex items-center gap-4 rounded-lg border border-border-subtle bg-surface-raised p-5 shadow-sm">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-tint text-brand-strong">
-        {icon}
-      </span>
-      <div>
-        <p className="display-md text-ink-primary">{value}</p>
-        <p className="label-sm text-ink-secondary">{label}</p>
-      </div>
-    </div>
-  );
-}
+const CAFE_COLUMNS: Column[] = [
+  { header: "Cafe", skeletonWidth: "w-28" },
+  { header: "Login URL", skeletonWidth: "w-24" },
+  { header: "Staff", skeletonWidth: "w-8" },
+  { header: "Orders", skeletonWidth: "w-10" },
+  { header: "Status", headerClassName: "text-right", skeletonWidth: "w-16", skeletonVariant: "badge" },
+];
 
 export default function PlatformDashboardPage() {
   const router = useRouter();
@@ -61,6 +58,7 @@ export default function PlatformDashboardPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [cafes, setCafes] = useState<CafeRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -84,9 +82,12 @@ export default function PlatformDashboardPage() {
       return;
     }
     refreshAll()
-      .then(() => setReady(true))
+      .then(() => {
+        setReady(true);
+        setLoadError(false);
+      })
       .catch(() => {
-        // platformFetchJson already redirects to /platform/login on a 401
+        setLoadError(true);
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,7 +138,7 @@ export default function PlatformDashboardPage() {
   if (!ready) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-canvas">
-        <div className="h-8 w-40 animate-pulse rounded-md bg-surface-sunken" />
+        <Skeleton className="h-8 w-40" />
       </div>
     );
   }
@@ -164,14 +165,18 @@ export default function PlatformDashboardPage() {
         </button>
       </div>
 
-      {overview && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatTile icon={<IconGrid />} label="Cafes" value={overview.totalCafes} />
-          <StatTile icon={<IconGrid />} label="Active cafes" value={overview.activeCafes} />
-          <StatTile icon={<IconUsers />} label="Staff, platform-wide" value={overview.totalStaff} />
-          <StatTile icon={<IconClipboardList />} label="Orders, all-time" value={overview.totalOrders} />
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {overview ? (
+          <>
+            <StatCard label="Cafes" value={overview.totalCafes} />
+            <StatCard label="Active cafes" value={overview.activeCafes} />
+            <StatCard label="Staff, platform-wide" value={overview.totalStaff} />
+            <StatCard label="Orders, all-time" value={overview.totalOrders} />
+          </>
+        ) : (
+          Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)
+        )}
+      </div>
 
       <SectionCard
         icon={<IconPlus />}
@@ -230,61 +235,52 @@ export default function PlatformDashboardPage() {
       </SectionCard>
 
       <SectionCard icon={<IconBanknote />} title="Cafes on the platform" description="Every tenant, and their current status.">
-        {loading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-md bg-surface-sunken" />
-            ))}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                  <th className="py-3 pr-4">Cafe</th>
-                  <th className="py-3 pr-4">Login URL</th>
-                  <th className="py-3 pr-4">Staff</th>
-                  <th className="py-3 pr-4">Orders</th>
-                  <th className="py-3 pr-0 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cafes.map((cafe) => (
-                  <tr key={cafe.id} className="border-b border-border-subtle last:border-0">
-                    <td className="py-4 pr-4">
-                      <Link href={`/platform/cafes/${cafe.id}`} className="body-md font-medium text-brand-strong hover:underline">
-                        {cafe.name}
-                      </Link>
-                    </td>
-                    <td className="py-4 pr-4 body-md text-ink-secondary">/c/{cafe.slug}/login</td>
-                    <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.users}</td>
-                    <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.orders}</td>
-                    <td className="py-4 pr-0 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleActive(cafe)}
-                        className={`label-sm rounded-pill px-3 py-1 font-semibold transition ${
-                          cafe.isActive
-                            ? "bg-status-success-tint text-status-success-ink hover:brightness-95"
-                            : "bg-surface-sunken text-ink-faint hover:brightness-95"
-                        }`}
-                      >
-                        {cafe.isActive ? "Active" : "Inactive"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {cafes.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center body-md text-ink-faint">
-                      No cafes yet -- create the first one above.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          columns={CAFE_COLUMNS}
+          data={cafes}
+          rowKey={(c) => c.id}
+          loading={loading}
+          error={loadError}
+          onRetry={() => {
+            setLoading(true);
+            setLoadError(false);
+            refreshAll()
+              .then(() => setReady(true))
+              .catch(() => setLoadError(true))
+              .finally(() => setLoading(false));
+          }}
+          skeletonRows={2}
+          empty={{
+            icon: <IconBanknote className="h-6 w-6" />,
+            title: "No cafes yet",
+            description: "Create the first one using the form above.",
+          }}
+          renderRow={(cafe) => (
+            <>
+              <td className="py-4 pr-4">
+                <Link href={`/platform/cafes/${cafe.id}`} className="body-md font-medium text-brand-strong hover:underline">
+                  {cafe.name}
+                </Link>
+              </td>
+              <td className="py-4 pr-4 body-md text-ink-secondary">/c/{cafe.slug}/login</td>
+              <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.users}</td>
+              <td className="py-4 pr-4 body-md text-ink-secondary">{cafe._count.orders}</td>
+              <td className="py-4 pr-0 text-right">
+                <button
+                  type="button"
+                  onClick={() => handleToggleActive(cafe)}
+                  className={`label-sm rounded-pill px-3 py-1 font-semibold transition ${
+                    cafe.isActive
+                      ? "bg-status-success-tint text-status-success-ink hover:brightness-95"
+                      : "bg-surface-sunken text-ink-faint hover:brightness-95"
+                  }`}
+                >
+                  {cafe.isActive ? "Active" : "Inactive"}
+                </button>
+              </td>
+            </>
+          )}
+        />
       </SectionCard>
     </div>
   );

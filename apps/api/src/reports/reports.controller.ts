@@ -18,9 +18,9 @@ export class ReportsController {
     return this.reportsService.getSummary(user.cafeId, query);
   }
 
-  @Get('revenue-by-day')
-  revenueByDay(@CurrentUser() user: CurrentUserPayload, @Query() query: ReportsQueryDto) {
-    return this.reportsService.getRevenueByDay(user.cafeId, query);
+  @Get('revenue-by-period')
+  revenueByPeriod(@CurrentUser() user: CurrentUserPayload, @Query() query: ReportsQueryDto) {
+    return this.reportsService.getRevenueByPeriod(user.cafeId, query);
   }
 
   @Get('top-items')
