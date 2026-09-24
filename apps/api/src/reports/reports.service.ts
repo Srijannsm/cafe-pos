@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { ReportsQueryDto, GroupBy } from './dto/reports-query.dto.js';
+import { assertReportsAllowed } from '../subscription/plan-limits.js';
 
 const DEFAULT_RANGE_DAYS = 30;
 
@@ -10,6 +11,15 @@ type Range = { from: Date; to: Date };
 @Injectable()
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
+
+  /** Fetches the cafe's plan fields and throws if reports aren't included. */
+  private async assertPlanAccess(cafeId: number) {
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+      where: { id: cafeId },
+      select: { plan: true, subscriptionStatus: true },
+    });
+    assertReportsAllowed(cafe);
+  }
 
   // Revenue is read off Payment rows, not Order.total -- Payment.amount is
   // the actual amount collected at the moment of payment, while Order.total
@@ -35,6 +45,8 @@ export class ReportsService {
   }
 
   async getSummary(cafeId: number, dto: ReportsQueryDto) {
+    await this.assertPlanAccess(cafeId);
+
     const { from, to } = this.resolveRange(dto);
 
     const payments = await this.prisma.payment.findMany({
@@ -74,6 +86,8 @@ export class ReportsService {
   }
 
   async getRevenueByPeriod(cafeId: number, dto: ReportsQueryDto) {
+    await this.assertPlanAccess(cafeId);
+
     const { from, to } = this.resolveRange(dto);
     const groupBy: GroupBy = dto.groupBy ?? 'day';
 
@@ -101,6 +115,8 @@ export class ReportsService {
   }
 
   async getTopItems(cafeId: number, dto: ReportsQueryDto, limit = 10) {
+    await this.assertPlanAccess(cafeId);
+
     const { from, to } = this.resolveRange(dto);
 
     const orderItems = await this.prisma.orderItem.findMany({
@@ -149,6 +165,8 @@ export class ReportsService {
   }
 
   async getPaymentMethods(cafeId: number, dto: ReportsQueryDto) {
+    await this.assertPlanAccess(cafeId);
+
     const { from, to } = this.resolveRange(dto);
 
     const payments = await this.prisma.payment.findMany({
@@ -188,4 +206,5 @@ export class ReportsService {
 
     return { date, summary, topItems, paymentMethods };
   }
+
 }

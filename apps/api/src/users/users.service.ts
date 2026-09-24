@@ -3,6 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
+import { assertNotOverdue, assertStaffLimit } from '../subscription/plan-limits.js';
 
 const ADMIN_SAFE_SELECT = {
   id: true,
@@ -24,6 +25,17 @@ export class UsersService {
   }
 
   async create(cafeId: number, dto: CreateUserDto) {
+    // Fetch cafe subscription state and current staff count together
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+      where: { id: cafeId },
+      select: { plan: true, subscriptionStatus: true },
+    });
+
+    assertNotOverdue(cafe);
+
+    const staffCount = await this.prisma.user.count({ where: { cafeId } });
+    assertStaffLimit(cafe, staffCount);
+
     const existing = await this.prisma.user.findUnique({
       where: { cafeId_name: { cafeId, name: dto.name } },
     });

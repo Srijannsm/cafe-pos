@@ -6,15 +6,14 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { OrdersGateway } from './orders.gateway.js';
 import { Prisma } from '../generated/prisma/client.js';
 
-// A hand-rolled Prisma mock rather than a real DB: fast, and it forces us to
-// state exactly which Prisma calls each service method is expected to make.
-// $transaction just runs the callback against this same mock, since none of
-// these tests need real transactional isolation -- only the sequence of
-// calls the service makes inside it.
 const CAFE_ID = 1;
 
 function createMockPrisma() {
   const prisma: any = {
+    cafe: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ plan: 'starter', subscriptionStatus: 'active' }),
+      update: vi.fn().mockResolvedValue({ lastBillNumber: 1 }),
+    },
     order: {
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -34,9 +33,11 @@ function createMockPrisma() {
     restaurantTable: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     menuItem: {
       findFirst: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     user: {
       findFirst: vi.fn(),
@@ -46,6 +47,7 @@ function createMockPrisma() {
     },
   };
   prisma.$transaction = vi.fn((callback: (tx: unknown) => unknown) => callback(prisma));
+  prisma.$executeRaw = vi.fn().mockResolvedValue(0);
   return prisma;
 }
 
@@ -91,12 +93,15 @@ describe('OrdersService', () => {
 
     it('throws if the table is not free', async () => {
       prisma.restaurantTable.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'occupied' });
+      // Service checks for an active order to confirm the table is genuinely occupied
+      prisma.order.findFirst.mockResolvedValue({ id: 99, status: 'preparing' });
 
       await expect(service.create(CAFE_ID, dto)).rejects.toThrow(BadRequestException);
     });
 
     it('throws if the waiter does not belong to this cafe', async () => {
       prisma.restaurantTable.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'free' });
+      // cafe check passes (mocked in beforeEach)
       prisma.user.findFirst.mockResolvedValue(null);
 
       await expect(service.create(CAFE_ID, dto)).rejects.toThrow(NotFoundException);
@@ -154,7 +159,9 @@ describe('OrdersService', () => {
       expect(gateway.emitOrderSentToKitchen).not.toHaveBeenCalled();
     });
 
-    it('reopens a served order back to preparing and notifies the kitchen', async () => {
+    // The service reopens a served order back to "pending" (not "preparing") so
+    // the waiter can review the new items before explicitly sending to kitchen.
+    it('reopens a served order back to pending', async () => {
       prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'served' });
       prisma.menuItem.findFirst.mockResolvedValue({ id: 5, price: new Prisma.Decimal(100) });
       prisma.orderItem.create.mockResolvedValue({ id: 99 });
@@ -164,9 +171,8 @@ describe('OrdersService', () => {
 
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { status: 'preparing' },
+        data: { status: 'pending' },
       });
-      expect(gateway.emitOrderSentToKitchen).toHaveBeenCalledWith(CAFE_ID, { orderId: 1 });
     });
   });
 
@@ -177,14 +183,20 @@ describe('OrdersService', () => {
       await expect(service.sendToKitchen(CAFE_ID, 1)).rejects.toThrow(NotFoundException);
     });
 
-    it('throws if the order is not pending', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'preparing', orderItems: [] });
+    it('throws if the order is not pending or preparing', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, cafeId: CAFE_ID, status: 'billed',
+        orderItems: [{ id: 1, status: 'pending', sentToKitchen: false }],
+      });
 
       await expect(service.sendToKitchen(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
     });
 
-    it('throws if the order has no items', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'pending', orderItems: [] });
+    it('throws if the order has no unsent pending items', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, cafeId: CAFE_ID, status: 'pending',
+        orderItems: [],
+      });
 
       await expect(service.sendToKitchen(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
     });
@@ -194,7 +206,7 @@ describe('OrdersService', () => {
         id: 1,
         cafeId: CAFE_ID,
         status: 'pending',
-        orderItems: [{ id: 1 }],
+        orderItems: [{ id: 10, status: 'pending', sentToKitchen: false }],
       });
       prisma.order.update.mockResolvedValue({ id: 1, status: 'preparing' });
 
@@ -285,13 +297,19 @@ describe('OrdersService', () => {
     });
 
     it('throws if the order is not pending', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'preparing', tableId: 3 });
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, cafeId: CAFE_ID, status: 'preparing', tableId: 3,
+        orderItems: [],
+      });
 
       await expect(service.cancel(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
     });
 
     it('cancels the order and frees the table', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'pending', tableId: 3 });
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, cafeId: CAFE_ID, status: 'pending', tableId: 3,
+        orderItems: [],   // no stock-tracked items to restock
+      });
       prisma.order.update.mockResolvedValue({ id: 1, status: 'cancelled' });
 
       await service.cancel(CAFE_ID, 1);
@@ -311,7 +329,10 @@ describe('OrdersService', () => {
     });
 
     it('throws if the order is not served', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'preparing', orderItems: [] });
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, cafeId: CAFE_ID, status: 'preparing', orderItems: [],
+        cafe: { vatEnabled: false, vatRate: null },
+      });
 
       await expect(service.generateBill(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
     });
@@ -321,6 +342,7 @@ describe('OrdersService', () => {
         id: 1,
         cafeId: CAFE_ID,
         status: 'served',
+        cafe: { vatEnabled: false, vatRate: null },
         orderItems: [
           {
             price: new Prisma.Decimal(100),
@@ -335,7 +357,6 @@ describe('OrdersService', () => {
         ],
       });
       prisma.order.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 1, ...data }));
-
       // (100 + 20) * 2 + 50 * 1 = 290
       const result = await service.generateBill(CAFE_ID, 1);
 
@@ -357,15 +378,16 @@ describe('OrdersService', () => {
       await expect(service.reopenToServed(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
     });
 
-    it('reopens a billed order back to served and clears the total', async () => {
+    // Service clears subtotal and vatAmount in addition to total when reopening.
+    it('reopens a billed order back to served and clears all bill fields', async () => {
       prisma.order.findFirst.mockResolvedValue({ id: 1, cafeId: CAFE_ID, status: 'billed' });
-      prisma.order.update.mockResolvedValue({ id: 1, status: 'served', total: null });
+      prisma.order.update.mockResolvedValue({ id: 1, status: 'served', total: null, subtotal: null, vatAmount: null });
 
       await service.reopenToServed(CAFE_ID, 1);
 
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { status: 'served', total: null },
+        data: { status: 'served', total: null, subtotal: null, vatAmount: null },
       });
     });
   });
@@ -392,8 +414,10 @@ describe('OrdersService', () => {
         status: 'billed',
         tableId: 4,
         total: new Prisma.Decimal(290),
+        orderItems: [],
       });
       prisma.payment.create.mockResolvedValue({ id: 1, orderId: 1, amount: new Prisma.Decimal(290) });
+      prisma.restaurantTable.updateMany.mockResolvedValue({ count: 0 });
 
       await service.recordPayment(CAFE_ID, 1, dto);
 
@@ -421,6 +445,209 @@ describe('OrdersService', () => {
       const result = await service.findOne(CAFE_ID, 1);
 
       expect(result).toEqual({ id: 1, cafeId: CAFE_ID, status: 'pending' });
+    });
+  });
+
+  describe('sendToKitchen — sentToKitchen flag', () => {
+    it('marks all pending items as sentToKitchen via $executeRaw', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1,
+        cafeId: CAFE_ID,
+        status: 'pending',
+        orderItems: [
+          { id: 10, status: 'pending', sentToKitchen: false },
+          { id: 11, status: 'pending', sentToKitchen: false },
+        ],
+      });
+      prisma.order.update.mockResolvedValue({ id: 1, status: 'preparing' });
+
+      await service.sendToKitchen(CAFE_ID, 1);
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('re-sends only new unsent items on a preparing order', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1,
+        cafeId: CAFE_ID,
+        status: 'preparing',
+        orderItems: [
+          { id: 10, status: 'pending', sentToKitchen: false }, // new unsent item
+        ],
+      });
+      prisma.order.update.mockResolvedValue({ id: 1, status: 'preparing' });
+
+      await service.sendToKitchen(CAFE_ID, 1);
+
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+      expect(gateway.emitOrderSentToKitchen).toHaveBeenCalledWith(CAFE_ID, { orderId: 1 });
+    });
+  });
+
+  describe('mergeInto', () => {
+    const baseSource = {
+      id: 2,
+      cafeId: CAFE_ID,
+      status: 'pending',
+      tableId: 10,
+      orderItems: [
+        {
+          id: 20,
+          menuItemId: 5,
+          quantity: 1,
+          price: { toNumber: () => 150 },
+          status: 'pending',
+          sentToKitchen: false,
+          orderItemModifiers: [],
+        },
+      ],
+    };
+    const baseTarget = { id: 3, cafeId: CAFE_ID, status: 'pending', tableId: 11 };
+
+    it('throws if source and target are the same order', async () => {
+      await expect(service.mergeInto(CAFE_ID, 1, 1)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws if source order does not exist', async () => {
+      prisma.order.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(baseTarget);
+
+      await expect(service.mergeInto(CAFE_ID, 2, 3)).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws if target order does not exist', async () => {
+      prisma.order.findFirst
+        .mockResolvedValueOnce(baseSource)
+        .mockResolvedValueOnce(null);
+
+      await expect(service.mergeInto(CAFE_ID, 2, 3)).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws if the source order is already closed', async () => {
+      prisma.order.findFirst
+        .mockResolvedValueOnce({ ...baseSource, status: 'cancelled' })
+        .mockResolvedValueOnce(baseTarget);
+
+      await expect(service.mergeInto(CAFE_ID, 2, 3)).rejects.toThrow(BadRequestException);
+    });
+
+    it('copies items from source to target preserving sentToKitchen', async () => {
+      const sourceWithSentItem = {
+        ...baseSource,
+        status: 'preparing',
+        orderItems: [{
+          ...baseSource.orderItems[0],
+          sentToKitchen: true,
+          status: 'pending',
+        }],
+      };
+      prisma.order.findFirst
+        .mockResolvedValueOnce(sourceWithSentItem)
+        .mockResolvedValueOnce(baseTarget)
+        .mockResolvedValueOnce({ ...baseTarget, id: 3 });
+
+      prisma.orderItem.create.mockResolvedValue({ id: 99 });
+      prisma.order.update.mockResolvedValue({});
+
+      await service.mergeInto(CAFE_ID, 2, 3);
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ sentToKitchen: true }),
+        }),
+      );
+    });
+
+    it('bumps target to preparing when source was in kitchen', async () => {
+      const preparingSource = { ...baseSource, status: 'preparing', orderItems: baseSource.orderItems };
+      prisma.order.findFirst
+        .mockResolvedValueOnce(preparingSource)
+        .mockResolvedValueOnce(baseTarget)
+        .mockResolvedValueOnce({ ...baseTarget, status: 'preparing' });
+
+      prisma.orderItem.create.mockResolvedValue({ id: 99 });
+      prisma.order.update.mockResolvedValue({});
+
+      await service.mergeInto(CAFE_ID, 2, 3);
+
+      const updateCalls = prisma.order.update.mock.calls;
+      const bumpCall = updateCalls.find(
+        ([arg]: [any]) => arg.where.id === 3 && arg.data.status === 'preparing',
+      );
+      expect(bumpCall).toBeDefined();
+    });
+
+    it('cancels the source order after merge', async () => {
+      prisma.order.findFirst
+        .mockResolvedValueOnce(baseSource)
+        .mockResolvedValueOnce(baseTarget)
+        .mockResolvedValueOnce(baseTarget);
+
+      prisma.orderItem.create.mockResolvedValue({ id: 99 });
+      prisma.order.update.mockResolvedValue({});
+
+      await service.mergeInto(CAFE_ID, 2, 3);
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 2 },
+        data: { status: 'cancelled' },
+      });
+    });
+  });
+
+  describe('moveToTable', () => {
+    const activeOrder = { id: 1, cafeId: CAFE_ID, status: 'preparing', tableId: 5 };
+    const freeTarget = { id: 8, cafeId: CAFE_ID, tableNumber: 'T4', status: 'free' };
+
+    it('throws if the order does not exist', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.moveToTable(CAFE_ID, 1, 8)).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws if the order is already closed', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({ ...activeOrder, status: 'paid' });
+
+      await expect(service.moveToTable(CAFE_ID, 1, 8)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws if the target table does not exist', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce(activeOrder);
+      prisma.restaurantTable.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.moveToTable(CAFE_ID, 1, 8)).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws if the target table is not free', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce(activeOrder);
+      prisma.restaurantTable.findFirst.mockResolvedValueOnce({ ...freeTarget, status: 'occupied' });
+
+      await expect(service.moveToTable(CAFE_ID, 1, 8)).rejects.toThrow(BadRequestException);
+    });
+
+    it('frees the old table, occupies the new one, and updates order.tableId', async () => {
+      prisma.order.findFirst
+        .mockResolvedValueOnce(activeOrder)
+        .mockResolvedValueOnce(activeOrder);
+      prisma.restaurantTable.findFirst.mockResolvedValueOnce(freeTarget);
+      prisma.restaurantTable.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({ ...activeOrder, tableId: 8 });
+
+      await service.moveToTable(CAFE_ID, 1, 8);
+
+      expect(prisma.restaurantTable.update).toHaveBeenCalledWith({
+        where: { id: 5 },
+        data: { status: 'free' },
+      });
+      expect(prisma.restaurantTable.update).toHaveBeenCalledWith({
+        where: { id: 8 },
+        data: { status: 'occupied' },
+      });
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { tableId: 8 },
+      });
     });
   });
 });

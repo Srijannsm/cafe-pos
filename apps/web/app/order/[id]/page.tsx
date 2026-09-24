@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { useState, useEffect, useCallback, useMemo, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, apiFetchJson } from "../../../lib/api";
@@ -19,7 +19,7 @@ import { PriceDisplay } from "../../../components/ui/PriceDisplay";
 import { StatusBadge } from "../../../components/ui/StatusBadge";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { ErrorState } from "../../../components/ui/ErrorState";
-import { IconX, IconCheck } from "../../../components/icons";
+import { IconX, IconCheck, IconSearch } from "../../../components/icons";
 
 type Order = {
   id: number;
@@ -47,6 +47,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [menuSearch, setMenuSearch] = useState("");
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [selectedModifierIds, setSelectedModifierIds] = useState<number[]>([]);
@@ -87,10 +88,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
 
   function selectItem(item: MenuItem) {
     if (item.trackStock && item.stockQuantity <= 0) return;
-    if (selectedItemId === item.id) {
-      setSelectedItemId(null);
-      return;
-    }
+    if (selectedItemId === item.id) { setSelectedItemId(null); return; }
     setSelectedItemId(item.id);
     setQuantity(1);
     setSelectedModifierIds([]);
@@ -98,9 +96,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
 
   function toggleModifier(modifierId: number) {
     setSelectedModifierIds((current) =>
-      current.includes(modifierId)
-        ? current.filter((id) => id !== modifierId)
-        : [...current, modifierId],
+      current.includes(modifierId) ? current.filter((mid) => mid !== modifierId) : [...current, modifierId],
     );
   }
 
@@ -111,14 +107,11 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       await apiFetchJson(`/orders/${id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          menuItemId: item.id,
-          quantity,
-          modifierIds: selectedModifierIds,
-        }),
+        body: JSON.stringify({ menuItemId: item.id, quantity, modifierIds: selectedModifierIds }),
       });
       setSelectedItemId(null);
-      await refreshOrder();
+      const updated = await refreshOrder();
+
       showToast(`Added ${quantity}× ${item.name}`);
       setMobileTab("cart");
       setRecentlyAddedId(item.id);
@@ -127,6 +120,23 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       setError(err instanceof Error ? err.message : "Could not add that item.");
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function handleQuickAdd(item: MenuItem) {
+    try {
+      await apiFetchJson(`/orders/${id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ menuItemId: item.id, quantity: 1, modifierIds: [] }),
+      });
+      await refreshOrder();
+      showToast(`Added 1× ${item.name}`);
+      setMobileTab("cart");
+      setRecentlyAddedId(item.id);
+      setTimeout(() => setRecentlyAddedId(null), 400);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not add that item.", "error");
     }
   }
 
@@ -198,11 +208,24 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2000);
     } catch {
-      // silently ignore — waiter can retry
+      // silently ignore
     } finally {
       setNotesSaving(false);
     }
   }
+
+  // Menu filtering
+  const categories = useMemo(() => groupByCategory(menu), [menu]);
+  const searchedItems = useMemo(() => {
+    if (!menuSearch.trim()) return null;
+    const q = menuSearch.toLowerCase();
+    return menu.filter((item) => item.name.toLowerCase().includes(q));
+  }, [menu, menuSearch]);
+
+  const currentCategory = activeCategory ?? categories[0]?.[0];
+  const itemsToShow = searchedItems !== null
+    ? searchedItems
+    : (categories.find(([name]) => name === currentCategory)?.[1] ?? []);
 
   if (!ready || !order) {
     return (
@@ -213,10 +236,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             <ErrorState
               title="Couldn't load this order"
               description="The order didn't come through — check your connection and try again."
-              onRetry={() => {
-                setLoadError(false);
-                refreshOrder().catch(() => setLoadError(true));
-              }}
+              onRetry={() => { setLoadError(false); refreshOrder().catch(() => setLoadError(true)); }}
             />
           ) : (
             <div className="grid gap-6 sm:grid-cols-2">
@@ -236,16 +256,29 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const runningTotal = order.orderItems.reduce((sum, item) => sum + lineTotal(item), 0);
   const allItemsReady =
     order.orderItems.length > 0 && order.orderItems.every((item) => item.status !== "pending");
-  const categories = groupByCategory(menu);
-  const currentCategory = activeCategory ?? categories[0]?.[0];
-  const itemsToShow = categories.find(([name]) => name === currentCategory)?.[1] ?? [];
   const isFinal = order.status === "cancelled" || order.status === "paid";
+
+  // --- item groupings used in both the cart section and action buttons ---
+  // Items kitchen has finished (ready or served)
+  const sentItems = order.orderItems.filter((i) => i.status === "ready" || i.status === "served");
+  // Items in kitchen (order is preparing, item still pending AND was already sent)
+  const inKitchenItems = order.status === "preparing"
+    ? order.orderItems.filter((i) => i.status === "pending" && i.sentToKitchen)
+    : [];
+  // Items added after order was sent (need another send to kitchen)
+  const newUnsentItems = order.status === "preparing"
+    ? order.orderItems.filter((i) => i.status === "pending" && !i.sentToKitchen)
+    : [];
+  // Items in an unsent order (nothing sent yet)
+  const pendingFirstItems = order.status === "pending"
+    ? order.orderItems.filter((i) => i.status === "pending")
+    : [];
 
   return (
     <main id="main-content" className="min-h-screen">
       <NavBar />
       {toastHost}
-      {/* Mobile tab toggle — only shown on small screens when order is active */}
+      {/* Mobile tab toggle */}
       {!isFinal && (
         <div className="flex border-b border-border-subtle sm:hidden">
           <button
@@ -260,14 +293,19 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             onClick={() => setMobileTab("cart")}
             className={`flex-1 py-3 label-md font-semibold transition-colors ${mobileTab === "cart" ? "border-b-2 border-brand text-brand-strong" : "text-ink-secondary"}`}
           >
-            Cart{order.orderItems.length > 0 && <span className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white text-xs">{order.orderItems.length}</span>}
+            Cart{order.orderItems.length > 0 && (
+              <span className="ml-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white text-xs">
+                {order.orderItems.length}
+              </span>
+            )}
           </button>
         </div>
       )}
+
       <div className={isFinal ? "p-4 sm:p-6" : "grid gap-6 p-4 sm:grid-cols-2 sm:p-6"}>
         {!isFinal && (
           <section className={mobileTab === "cart" ? "hidden sm:block" : ""}>
-            <h2 className="heading-lg mb-4 text-ink-primary">Menu</h2>
+            <h2 className="heading-lg mb-3 text-ink-primary">Menu</h2>
 
             {menuLoading ? (
               <div className="space-y-3">
@@ -277,14 +315,44 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               </div>
             ) : (
               <>
-                {categories.length > 0 && currentCategory != null && (
-                  <div className="mb-4">
+                {/* Search bar */}
+                <div className="relative mb-3">
+                  <IconSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint pointer-events-none" />
+                  <input
+                    type="search"
+                    placeholder="Search menu…"
+                    value={menuSearch}
+                    onChange={(e) => { setMenuSearch(e.target.value); setSelectedItemId(null); }}
+                    className="w-full rounded-xl border border-border-subtle bg-surface-raised pl-9 pr-4 py-2.5 body-md text-ink-primary placeholder:text-ink-faint outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                  />
+                  {menuSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setMenuSearch("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-faint hover:text-ink-secondary"
+                    >
+                      <IconX className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category pills — hidden during search */}
+                {!menuSearch && categories.length > 0 && currentCategory != null && (
+                  <div className="mb-3">
                     <FilterPills
                       options={categories.map(([name]) => name)}
                       value={currentCategory}
-                      onChange={setActiveCategory}
+                      onChange={(cat) => { setActiveCategory(cat); setSelectedItemId(null); }}
                     />
                   </div>
+                )}
+
+                {menuSearch && (
+                  <p className="mb-2 label-sm text-ink-faint">
+                    {itemsToShow.length === 0
+                      ? `No items match "${menuSearch}"`
+                      : `${itemsToShow.length} result${itemsToShow.length === 1 ? "" : "s"}`}
+                  </p>
                 )}
 
                 <div className="grid grid-cols-2 items-start gap-3">
@@ -299,7 +367,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                       onToggleModifier={toggleModifier}
                       onQuantityChange={setQuantity}
                       onAdd={handleAddItem}
-                      addLoading={adding}
+                      addLoading={adding && selectedItemId === item.id}
+                      onQuickAdd={handleQuickAdd}
                     />
                   ))}
                 </div>
@@ -310,36 +379,39 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
 
         <section className={`${isFinal ? "mx-auto w-full max-w-md" : ""} ${!isFinal && mobileTab === "menu" ? "hidden sm:block" : ""}`}>
           <Card className="sticky top-20">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="heading-lg text-ink-primary">Order #{order.id}</h2>
-                <div className="mt-1">
-                  <StatusBadge tone={order.status === "preparing" && allItemsReady ? "success" : STATUS_TONE[order.status]}>
-                    {order.status === "preparing" && allItemsReady ? "ready to serve" : order.status}
-                  </StatusBadge>
-                </div>
+            <div className="mb-4">
+              <h2 className="heading-lg text-ink-primary">
+                Table {order.table.tableNumber} · #{order.id}
+              </h2>
+              <div className="mt-1">
+                <StatusBadge tone={order.status === "preparing" && allItemsReady ? "success" : STATUS_TONE[order.status]}>
+                  {order.status === "preparing" && allItemsReady ? "ready to serve" : order.status}
+                </StatusBadge>
               </div>
             </div>
 
             {(() => {
-              const servedItems = order.orderItems.filter((i) => i.status === "served" || i.status === "ready");
-              const pendingItems = order.orderItems.filter((i) => i.status === "pending");
               const canRemove = order.status === "pending" || order.status === "preparing";
+              const showSections = order.status === "preparing";
+              // Use component-scope groupings: sentItems, inKitchenItems, newUnsentItems, pendingFirstItems
 
-              const renderItem = (item: OrderItem, removable: boolean) => (
-                <div key={item.id} className={`rounded-md bg-surface-sunken p-3 ${recentlyAddedId === item.menuItem.id ? "animate-slide-in-right" : ""}`}>
+              const renderItem = (item: OrderItem, removable: boolean, variant: "normal" | "in-kitchen" | "done") => (
+                <div
+                  key={item.id}
+                  className={[
+                    "rounded-xl p-3 transition-colors",
+                    variant === "done" ? "bg-status-success-tint" : "bg-surface-sunken",
+                    recentlyAddedId === item.menuItem.id ? "animate-slide-in-right" : "",
+                  ].join(" ")}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        {/* Per-item kitchen status icon */}
-                        {item.status === "ready" && (
-                          <IconCheck className="h-4 w-4 shrink-0 text-status-success-ink" aria-label="Ready" />
+                        {variant === "done" && (
+                          <IconCheck className="h-4 w-4 shrink-0 text-status-success-ink" />
                         )}
-                        {item.status === "served" && (
-                          <IconCheck className="h-4 w-4 shrink-0 text-status-success-ink" aria-label="Served" />
-                        )}
-                        {item.status === "pending" && order.status === "preparing" && (
-                          <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-status-warning" aria-label="In the kitchen" />
+                        {variant === "in-kitchen" && (
+                          <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-status-warning" />
                         )}
                         <span className="body-md font-medium text-ink-primary">
                           {item.quantity}× {item.menuItem.name}
@@ -373,31 +445,46 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 </div>
               );
 
+              const SectionHeader = ({ label, count, accent }: { label: string; count: number; accent?: boolean }) => (
+                <div className={`flex items-center gap-2 pt-1 pb-0.5 ${accent ? "text-status-warning-ink" : "text-ink-faint"}`}>
+                  <span className="label-sm font-semibold uppercase tracking-wide">{label}</span>
+                  <div className={`h-px flex-1 ${accent ? "bg-status-warning/30" : "bg-border-subtle"}`} />
+                  <span className="label-sm">{count} item{count !== 1 ? "s" : ""}</span>
+                </div>
+              );
+
               return (
-                <div className="mb-4 space-y-2">
+                <div className="mb-4 space-y-1.5">
                   {order.orderItems.length === 0 && (
-                    <p className="body-md rounded-md bg-surface-sunken p-4 text-center text-ink-faint">
+                    <p className="body-md rounded-xl bg-surface-sunken p-4 text-center text-ink-faint">
                       No items yet — tap the menu to add some.
                     </p>
                   )}
 
-                  {/* Already-served items from prior rounds — read-only */}
-                  {servedItems.length > 0 && (
-                    <>
-                      {pendingItems.length > 0 && (
-                        <p className="label-sm text-ink-faint uppercase tracking-wide pb-0.5">Already served</p>
-                      )}
-                      {servedItems.map((item) => renderItem(item, false))}
-                    </>
-                  )}
+                  {/* Order not yet sent — plain list */}
+                  {pendingFirstItems.map((item) => renderItem(item, canRemove, "normal"))}
 
-                  {/* New items pending or in kitchen — removable */}
-                  {pendingItems.length > 0 && (
+                  {/* Order sent to kitchen — show sections */}
+                  {showSections && (
                     <>
-                      {servedItems.length > 0 && (
-                        <p className="label-sm text-ink-faint uppercase tracking-wide pt-1 pb-0.5">New items</p>
+                      {inKitchenItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <SectionHeader label="🔥 In kitchen" count={inKitchenItems.length} accent />
+                          {inKitchenItems.map((item) => renderItem(item, false, "in-kitchen"))}
+                        </div>
                       )}
-                      {pendingItems.map((item) => renderItem(item, canRemove))}
+                      {sentItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <SectionHeader label="✓ Ready / served" count={sentItems.length} />
+                          {sentItems.map((item) => renderItem(item, false, "done"))}
+                        </div>
+                      )}
+                      {newUnsentItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <SectionHeader label="➕ New — not sent yet" count={newUnsentItems.length} />
+                          {newUnsentItems.map((item) => renderItem(item, true, "normal"))}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -411,7 +498,6 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               </div>
             )}
 
-            {/* Order notes */}
             {!isFinal && (
               <div className="mb-4">
                 <label htmlFor="order-notes" className="label-sm mb-1 block text-ink-secondary">
@@ -455,12 +541,20 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               <div className="flex flex-col gap-2">
                 <Button
                   onClick={() => setConfirmingKitchen(true)}
-                  disabled={order.status !== "pending" || order.orderItems.length === 0}
+                  disabled={
+                    // Enable when: order is pending (first send) OR order has new unsent items
+                    !(
+                      (order.status === "pending" && order.orderItems.length > 0) ||
+                      (order.status === "preparing" && newUnsentItems.length > 0)
+                    )
+                  }
                   variant="primary"
                   size="large"
                   className="w-full"
                 >
-                  Send to kitchen
+                  {order.status === "preparing" && newUnsentItems.length > 0
+                    ? `Send ${newUnsentItems.length} new item${newUnsentItems.length !== 1 ? "s" : ""} to kitchen`
+                    : "Send to kitchen"}
                 </Button>
                 <Button
                   onClick={handleServe}
@@ -480,13 +574,12 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 </Button>
                 {order.status === "billed" && (
                   <InlineAlert tone="info">
-                    This order is billed. Payment is collected from the Billing page.{" "}
+                    This order is billed.{" "}
                     <Link href={`/billing/${order.id}`} className="font-semibold underline">
                       Open billing
                     </Link>
                   </InlineAlert>
                 )}
-
                 {order.status === "pending" && (
                   <Button
                     onClick={() => setConfirmingCancel(true)}
@@ -499,25 +592,27 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               </div>
             )}
 
-            {error && (
-              <InlineAlert className="mt-4">{error}</InlineAlert>
-            )}
+            {error && <InlineAlert className="mt-4">{error}</InlineAlert>}
           </Card>
         </section>
       </div>
 
-      {/* Send-to-kitchen confirmation */}
       <ConfirmDialog
         open={confirmingKitchen}
         title="Send to kitchen?"
-        description={`${order.orderItems.length} item${order.orderItems.length === 1 ? "" : "s"} · Rs. ${runningTotal.toFixed(2)} total. This will notify the kitchen to start preparing.`}
+        description={(() => {
+          const newItems = order.orderItems.filter((i) => i.status === "pending");
+          const isNewRound = order.status === "preparing";
+          return isNewRound
+            ? `${newItems.length} new item${newItems.length === 1 ? "" : "s"} will be sent. The kitchen is already preparing your earlier items.`
+            : `${order.orderItems.length} item${order.orderItems.length === 1 ? "" : "s"} · Rs. ${runningTotal.toFixed(2)} total. This will notify the kitchen to start preparing.`;
+        })()}
         confirmLabel="Send"
         cancelLabel="Keep editing"
         onConfirm={handleSendToKitchen}
         onCancel={() => setConfirmingKitchen(false)}
       />
 
-      {/* Cancel order confirmation */}
       <ConfirmDialog
         open={confirmingCancel}
         title="Cancel this order?"

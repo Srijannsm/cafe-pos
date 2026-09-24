@@ -21,13 +21,23 @@ type MenuItemCardProps<T extends MenuItemData> = {
   size?: "default" | "compact";
   /** Extra className merged onto the wrapping Card. */
   className?: string;
+  /**
+   * Called when the quick-add (+) button is tapped on a collapsed card.
+   * Only fires for items with no modifiers — items with modifiers always
+   * expand so the user can choose their modifiers first.
+   * If not provided, the quick-add button is hidden and the card expands
+   * on tap as usual.
+   */
+  onQuickAdd?: (item: T) => void;
 };
 
 /**
  * A single menu-item card used in both the waiter order page and the
  * customer-facing QR self-order page.
  *
- * Collapsed: shows name, price (or out-of-stock), chevron.
+ * Collapsed: shows name, price (or out-of-stock), and either:
+ *   - a quick-add (+) circle button (no modifiers + onQuickAdd provided), or
+ *   - a chevron to expand (items with modifiers, or no handler provided).
  * Expanded: modifier toggles, quantity stepper, add button with computed price.
  */
 export function MenuItemCard<T extends MenuItemData & { trackStock: boolean; stockQuantity: number; lowStockThreshold: number }>({
@@ -42,9 +52,15 @@ export function MenuItemCard<T extends MenuItemData & { trackStock: boolean; sto
   addLoading,
   size = "default",
   className,
+  onQuickAdd,
 }: MenuItemCardProps<T>) {
   const outOfStock = item.trackStock && item.stockQuantity <= 0;
   const lowStock = item.trackStock && !outOfStock && item.stockQuantity <= item.lowStockThreshold;
+  const hasModifiers = item.modifiers.length > 0;
+
+  // Show quick-add only when: handler provided, item has no modifiers,
+  // not out of stock, and card is collapsed.
+  const showQuickAdd = !!onQuickAdd && !hasModifiers && !outOfStock && !selected;
 
   const selectedPrice =
     (Number(item.price) +
@@ -55,7 +71,6 @@ export function MenuItemCard<T extends MenuItemData & { trackStock: boolean; sto
 
   const compact = size === "compact";
 
-  // Stepper button sizing
   const stepperBtn = compact
     ? "h-9 w-9 rounded-md border border-border-subtle text-ink-secondary hover:bg-surface-sunken"
     : "h-10 w-10 rounded-pill border border-border-strong bg-surface-raised text-ink-secondary active:scale-95";
@@ -64,7 +79,6 @@ export function MenuItemCard<T extends MenuItemData & { trackStock: boolean; sto
     ? "body-md w-6 text-center font-semibold text-ink-primary"
     : "heading-sm w-6 text-center text-ink-primary";
 
-  // When selected, span both columns in the parent grid.
   const expandClass = compact ? "sm:col-span-2" : "col-span-2";
 
   return (
@@ -72,28 +86,49 @@ export function MenuItemCard<T extends MenuItemData & { trackStock: boolean; sto
       className={`${selected ? expandClass : ""} ${outOfStock ? "opacity-50" : ""} ${className ?? ""}`}
     >
       {/* Collapsed header — always visible */}
-      <button
-        onClick={() => onSelect(item)}
-        disabled={outOfStock}
-        className="flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed"
-      >
-        <span className="body-md font-semibold text-ink-primary">{item.name}</span>
-        <span className="flex shrink-0 items-center gap-1.5">
-          {outOfStock ? (
-            <span className="label-sm font-semibold text-status-danger-ink">Out of stock</span>
-          ) : (
-            <>
-              {lowStock && (
-                <span className="label-sm text-status-warning-ink">{item.stockQuantity} left</span>
-              )}
-              <PriceDisplay amount={item.price} />
-            </>
-          )}
-          <IconChevronRight
-            className={`h-4 w-4 text-ink-faint transition-transform ${selected ? "rotate-90" : ""}`}
-          />
-        </span>
-      </button>
+      <div className="flex w-full items-center gap-2">
+        {/* Main tap area — expands the card (disabled for quick-add items so the whole row doesn't flicker) */}
+        <button
+          onClick={() => onSelect(item)}
+          disabled={outOfStock}
+          className="flex flex-1 items-center justify-between gap-2 text-left disabled:cursor-not-allowed min-w-0"
+        >
+          <span className="body-md font-semibold text-ink-primary truncate">{item.name}</span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {outOfStock ? (
+              <span className="label-sm font-semibold text-status-danger-ink">Out of stock</span>
+            ) : (
+              <>
+                {lowStock && (
+                  <span className="label-sm text-status-warning-ink">{item.stockQuantity} left</span>
+                )}
+                <PriceDisplay amount={item.price} />
+              </>
+            )}
+            {/* Chevron only when NOT showing quick-add button */}
+            {!showQuickAdd && !outOfStock && (
+              <IconChevronRight
+                className={`h-4 w-4 text-ink-faint transition-transform ${selected ? "rotate-90" : ""}`}
+              />
+            )}
+          </span>
+        </button>
+
+        {/* Quick-add button — circle + icon, only for items without modifiers */}
+        {showQuickAdd && (
+          <button
+            type="button"
+            aria-label={`Quick add ${item.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickAdd!(item);
+            }}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-white shadow-sm transition active:scale-90 hover:brightness-110"
+          >
+            <IconPlus className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       {/* Expanded section — modifier toggles, quantity stepper, add button */}
       {selected && (

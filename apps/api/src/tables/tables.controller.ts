@@ -7,6 +7,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
 import { CreateTableDto } from './dto/create-table.dto.js';
 import { UpdateTableDto } from './dto/update-table.dto.js';
+import { MergeTableDto } from './dto/merge-table.dto.js';
 
 @Controller('tables')
 export class TablesController {
@@ -42,5 +43,35 @@ export class TablesController {
   @Patch(':id/regenerate-qr')
   regenerateQr(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
     return this.tablesService.regenerateQr(user.cafeId, id);
+  }
+
+  /**
+   * Physical table merge (pre-order): combine two free tables into one seating
+   * area. The secondary table becomes 'reserved' (hidden from floor) and
+   * points mergedIntoId → primary. Staff start a single order on the primary.
+   * Available to waiters and admins — a waiter needs this when seating a large group.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/merge')
+  mergeTable(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MergeTableDto,
+  ) {
+    return this.tablesService.mergeTable(user.cafeId, id, dto.secondaryTableId);
+  }
+
+  /**
+   * Undo a physical merge: all secondary tables (mergedIntoId = :id) are
+   * restored to 'free'. Called when a merged group is done and tables are
+   * split back to individual seating.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/unmerge')
+  unmergeTable(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tablesService.unmergeTable(user.cafeId, id);
   }
 }

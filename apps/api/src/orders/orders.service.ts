@@ -6,6 +6,7 @@ import { RecordPaymentDto } from './dto/record-payment.dto.js';
 import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
 import { Prisma, OrderStatus } from '../generated/prisma/client.js';
 import { OrdersGateway } from './orders.gateway.js';
+import { assertNotOverdue } from '../subscription/plan-limits.js';
 
 @Injectable()
 export class OrdersService {
@@ -40,9 +41,27 @@ export class OrdersService {
       throw new NotFoundException(`Table ${dto.tableId} does not exist`);
     }
 
+    // Auto-heal stale 'occupied' status: if no active order exists for this table, treat it as free
     if (table.status !== 'free') {
-      throw new BadRequestException(`Table ${dto.tableId} is not free`);
+      const existingActiveOrder = await this.prisma.order.findFirst({
+        where: { tableId: table.id, status: { notIn: ['paid', 'cancelled'] } },
+      });
+      if (existingActiveOrder) {
+        throw new BadRequestException(`Table ${dto.tableId} is not free`);
+      }
+      // Heal the stale status
+      await this.prisma.restaurantTable.update({
+        where: { id: table.id },
+        data: { status: 'free' },
+      });
     }
+
+    // Block new orders when the cafe subscription is overdue (read-only mode).
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+      where: { id: cafeId },
+      select: { plan: true, subscriptionStatus: true },
+    });
+    assertNotOverdue(cafe);
 
     // A waiter id from another cafe should never be assignable here --
     // without this check a valid-looking id from a different tenant would
@@ -178,16 +197,32 @@ export class OrdersService {
     throw new NotFoundException(`Order ${orderId} does not exist`);
   }
 
-  if (order.status !== 'pending') {
+  // Allow from 'pending' (first round) AND 'preparing' (new items added
+  // while kitchen is still working on the previous round).
+  if (order.status !== 'pending' && order.status !== 'preparing') {
     throw new BadRequestException(
       `Order ${orderId} cannot be sent to kitchen from status "${order.status}"`,
     );
   }
 
-  if (order.orderItems.length === 0) {
+  const pendingItems = order.orderItems.filter((i) => i.status === 'pending');
+
+  if (pendingItems.length === 0) {
     throw new BadRequestException(
-      `Order ${orderId} has no items — add at least one item before sending to kitchen`,
+      `Order ${orderId} has no new items to send — all items are already in the kitchen`,
     );
+  }
+
+  // Mark all currently-pending items as sentToKitchen so that after a table
+  // transfer (or page reload) the frontend can still distinguish
+  // "in kitchen" from "added but not yet sent".
+  const pendingItemIds = pendingItems.map((i) => i.id);
+  if (pendingItemIds.length > 0) {
+    await this.prisma.$executeRaw`
+      UPDATE order_items
+      SET "sentToKitchen" = true
+      WHERE id = ANY(${pendingItemIds}::int[])
+    `;
   }
 
   const updated = await this.prisma.order.update({
@@ -452,6 +487,13 @@ export class OrdersService {
       data: { status: 'free' },
     });
 
+    // When the paid order was on a physically merged primary table, release
+    // the secondary tables back to free so they appear on the floor again.
+    await tx.restaurantTable.updateMany({
+      where: { mergedIntoId: order.tableId },
+      data: { mergedIntoId: null, status: 'free' },
+    });
+
     // Deduct stock for tracked menu items
     for (const item of order.orderItems) {
       if (!item.menuItem.trackStock) continue;
@@ -553,6 +595,121 @@ export class OrdersService {
       where: { id: orderId },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: { notes: dto.notes?.trim() || null } as any,
+    });
+  }
+
+  /**
+   * Merge all items from `sourceOrderId` into `targetOrderId`, then cancel
+   * the source order so its table is freed. Both orders must belong to the
+   * same cafe and be in an active (non-paid, non-cancelled) state.
+   *
+   * The source table's status automatically becomes "free" because no active
+   * order references it anymore.
+   */
+  async mergeInto(cafeId: number, sourceOrderId: number, targetOrderId: number) {
+    if (sourceOrderId === targetOrderId) {
+      throw new BadRequestException('Cannot merge an order into itself');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const [source, target] = await Promise.all([
+        tx.order.findFirst({
+          where: { id: sourceOrderId, cafeId },
+          include: { orderItems: { include: { orderItemModifiers: true } } },
+        }),
+        tx.order.findFirst({ where: { id: targetOrderId, cafeId } }),
+      ]);
+
+      if (!source) throw new NotFoundException(`Order ${sourceOrderId} does not exist`);
+      if (!target) throw new NotFoundException(`Order ${targetOrderId} does not exist`);
+
+      const terminal = ['paid', 'cancelled'] as const;
+      if (terminal.includes(source.status as typeof terminal[number])) {
+        throw new BadRequestException('Source order is already closed');
+      }
+      if (terminal.includes(target.status as typeof terminal[number])) {
+        throw new BadRequestException('Target order is already closed');
+      }
+
+      // Re-create each item from the source on the target order.
+      // Items that were already prepared/served are moved over as-is; the
+      // kitchen has already done that work and it should appear on the merged bill.
+      for (const item of source.orderItems) {
+        await tx.orderItem.create({
+          data: {
+            orderId: targetOrderId,
+            menuItemId: item.menuItemId,
+            quantity: item.quantity,
+            price: item.price,
+            status: item.status,
+            sentToKitchen: item.sentToKitchen,
+            orderItemModifiers: {
+              create: item.orderItemModifiers.map((oim) => ({ modifierId: oim.modifierId })),
+            },
+          },
+        });
+      }
+
+      // Cancel the source order (frees the source table implicitly)
+      await tx.order.update({
+        where: { id: sourceOrderId },
+        data: { status: 'cancelled' },
+      });
+
+      // If source was in kitchen (preparing) or had ready/served items,
+      // ensure target is also preparing so kitchen state is preserved.
+      const sourceWasActive = source.status === 'preparing' ||
+        source.orderItems.some((i) => i.status === 'ready' || i.status === 'served');
+      if (sourceWasActive && target.status === 'pending') {
+        await tx.order.update({
+          where: { id: targetOrderId },
+          data: { status: 'preparing' },
+        });
+      }
+    });
+
+    return this.findOne(cafeId, targetOrderId);
+  }
+
+  /**
+   * Move an entire order to a different (free) table.
+   * The source table becomes free; the target table becomes occupied.
+   */
+  async moveToTable(cafeId: number, orderId: number, targetTableId: number) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: orderId, cafeId },
+      });
+      if (!order) throw new NotFoundException(`Order ${orderId} not found`);
+
+      const terminal = ['paid', 'cancelled'] as const;
+      if (terminal.includes(order.status as typeof terminal[number])) {
+        throw new BadRequestException('Cannot move a closed order');
+      }
+
+      const targetTable = await tx.restaurantTable.findFirst({
+        where: { id: targetTableId, cafeId },
+      });
+      if (!targetTable) throw new NotFoundException(`Table ${targetTableId} not found`);
+      if (targetTable.status !== 'free') {
+        throw new BadRequestException(`Table ${targetTable.tableNumber} is not free`);
+      }
+
+      // Free the old table, occupy the new one, update the order
+      await tx.restaurantTable.update({
+        where: { id: order.tableId },
+        data: { status: 'free' },
+      });
+      await tx.restaurantTable.update({
+        where: { id: targetTableId },
+        data: { status: 'occupied' },
+      });
+      await tx.order.update({
+        where: { id: orderId },
+        data: { tableId: targetTableId },
+      });
+
+      return this.findOne(cafeId, orderId);
     });
   }
 

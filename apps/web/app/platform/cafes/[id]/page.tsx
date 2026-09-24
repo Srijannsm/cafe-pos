@@ -5,13 +5,16 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { platformFetchJson, getPlatformToken } from "../../../../lib/api";
 import { useToast } from "../../../../components/Toast";
-import { IconChevronRight, IconUsers, IconClipboardList, IconReceipt } from "../../../../components/icons";
+import { IconChevronRight, IconUsers, IconClipboardList, IconReceipt, IconBanknote } from "../../../../components/icons";
 import { SectionCard } from "../../../admin/_components/SectionCard";
 import { ErrorState } from "../../../../components/ui/ErrorState";
 import { Skeleton } from "../../../../components/ui/Skeleton";
 import { StatCard } from "../../../../components/ui/StatCard";
 import { Button } from "../../../../components/ui/Button";
 import { InlineAlert } from "../../../../components/ui/InlineAlert";
+
+type SubscriptionPlan = "starter" | "standard" | "premium";
+type SubscriptionStatus = "trial" | "active" | "overdue" | "cancelled";
 
 type CafeDetail = {
   id: number;
@@ -21,6 +24,14 @@ type CafeDetail = {
   vatEnabled: boolean;
   vatRate: string;
   panNumber: string | null;
+  logoUrl: string | null;
+  plan: SubscriptionPlan;
+  billingCycle: string;
+  subscriptionStatus: SubscriptionStatus;
+  trialStartedAt: string;
+  nextBillingAt: string | null;
+  setupFeePaid: boolean;
+  subscriptionNotes: string | null;
   createdAt: string;
   users: { id: number; name: string; role: string; isActive: boolean }[];
   _count: { menuItems: number; tables: number; orders: number };
@@ -34,8 +45,26 @@ type CafeDetail = {
   }[];
 };
 
+const PLAN_LABELS: Record<SubscriptionPlan, string> = {
+  starter: "Starter — Rs. 999/mo",
+  standard: "Standard — Rs. 1,999/mo",
+  premium: "Premium — Rs. 3,499/mo",
+};
+
+const STATUS_STYLES: Record<SubscriptionStatus, string> = {
+  trial: "bg-blue-50 text-blue-700",
+  active: "bg-status-success-tint text-status-success-ink",
+  overdue: "bg-yellow-50 text-yellow-700",
+  cancelled: "bg-surface-sunken text-ink-faint",
+};
+
 function roleLabel(role: string) {
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function formatDate(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-NP", { year: "numeric", month: "short", day: "numeric" });
 }
 
 export default function CafeDetailPage() {
@@ -54,6 +83,17 @@ export default function CafeDetailPage() {
   const [vatSaving, setVatSaving] = useState(false);
   const [vatError, setVatError] = useState("");
 
+  // Subscription edit state
+  const [editingSub, setEditingSub] = useState(false);
+  const [subPlan, setSubPlan] = useState<SubscriptionPlan>("starter");
+  const [subCycle, setSubCycle] = useState("monthly");
+  const [subStatus, setSubStatus] = useState<SubscriptionStatus>("trial");
+  const [nextBilling, setNextBilling] = useState("");
+  const [setupFeePaid, setSetupFeePaid] = useState(false);
+  const [subNotes, setSubNotes] = useState("");
+  const [subSaving, setSubSaving] = useState(false);
+  const [subError, setSubError] = useState("");
+
   useEffect(() => {
     if (!getPlatformToken()) {
       router.replace("/platform/login");
@@ -62,9 +102,17 @@ export default function CafeDetailPage() {
     platformFetchJson<CafeDetail>(`/platform/cafes/${params.id}`)
       .then((data) => {
         setCafe(data);
+        // VAT
         setVatEnabled(data.vatEnabled);
         setVatRate(String(Number(data.vatRate)));
         setPanNumber(data.panNumber ?? "");
+        // Subscription
+        setSubPlan(data.plan);
+        setSubCycle(data.billingCycle);
+        setSubStatus(data.subscriptionStatus);
+        setNextBilling(data.nextBillingAt ? data.nextBillingAt.slice(0, 10) : "");
+        setSetupFeePaid(data.setupFeePaid);
+        setSubNotes(data.subscriptionNotes ?? "");
       })
       .catch(() => showToast("Could not load that cafe", "error"))
       .finally(() => setLoading(false));
@@ -117,6 +165,53 @@ export default function CafeDetailPage() {
     setPanNumber(cafe.panNumber ?? "");
     setVatError("");
     setEditingVat(false);
+  }
+
+  async function handleSaveSub() {
+    if (!cafe) return;
+    setSubError("");
+    setSubSaving(true);
+    try {
+      await platformFetchJson(`/platform/cafes/${cafe.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan: subPlan,
+          billingCycle: subCycle,
+          subscriptionStatus: subStatus,
+          nextBillingAt: nextBilling || null,
+          setupFeePaid,
+          subscriptionNotes: subNotes.trim() || null,
+        }),
+      });
+      setCafe((prev) => prev ? {
+        ...prev,
+        plan: subPlan,
+        billingCycle: subCycle,
+        subscriptionStatus: subStatus,
+        nextBillingAt: nextBilling || null,
+        setupFeePaid,
+        subscriptionNotes: subNotes.trim() || null,
+      } : prev);
+      setEditingSub(false);
+      showToast("Subscription updated");
+    } catch (err) {
+      setSubError(err instanceof Error ? err.message : "Could not save subscription.");
+    } finally {
+      setSubSaving(false);
+    }
+  }
+
+  function cancelSubEdit() {
+    if (!cafe) return;
+    setSubPlan(cafe.plan);
+    setSubCycle(cafe.billingCycle);
+    setSubStatus(cafe.subscriptionStatus);
+    setNextBilling(cafe.nextBillingAt ? cafe.nextBillingAt.slice(0, 10) : "");
+    setSetupFeePaid(cafe.setupFeePaid);
+    setSubNotes(cafe.subscriptionNotes ?? "");
+    setSubError("");
+    setEditingSub(false);
   }
 
   if (loading) {
@@ -176,6 +271,112 @@ export default function CafeDetailPage() {
         <StatCard label="Tables" value={cafe._count.tables} />
         <StatCard label="Orders, all-time" value={cafe._count.orders} />
       </div>
+
+      {/* Subscription */}
+      <SectionCard icon={<IconBanknote />} title="Subscription" description="Manually track the billing plan and status for this cafe.">
+        {editingSub ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="label-sm mb-1 block text-ink-secondary">Plan</label>
+                <select
+                  value={subPlan}
+                  onChange={(e) => setSubPlan(e.target.value as SubscriptionPlan)}
+                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                >
+                  <option value="starter">Starter — Rs. 999/mo</option>
+                  <option value="standard">Standard — Rs. 1,999/mo</option>
+                  <option value="premium">Premium — Rs. 3,499/mo</option>
+                </select>
+              </div>
+              <div>
+                <label className="label-sm mb-1 block text-ink-secondary">Billing cycle</label>
+                <select
+                  value={subCycle}
+                  onChange={(e) => setSubCycle(e.target.value)}
+                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+              </div>
+              <div>
+                <label className="label-sm mb-1 block text-ink-secondary">Status</label>
+                <select
+                  value={subStatus}
+                  onChange={(e) => setSubStatus(e.target.value as SubscriptionStatus)}
+                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                >
+                  <option value="trial">Trial</option>
+                  <option value="active">Active</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+              <div>
+                <label className="label-sm mb-1 block text-ink-secondary">Next billing date</label>
+                <input
+                  type="date"
+                  value={nextBilling}
+                  onChange={(e) => setNextBilling(e.target.value)}
+                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={setupFeePaid}
+                onChange={(e) => setSetupFeePaid(e.target.checked)}
+                className="h-4 w-4 rounded accent-brand"
+              />
+              <span className="body-md text-ink-primary">Setup fee paid</span>
+            </label>
+
+            <div>
+              <label className="label-sm mb-1 block text-ink-secondary">Notes (internal)</label>
+              <textarea
+                value={subNotes}
+                onChange={(e) => setSubNotes(e.target.value)}
+                rows={2}
+                placeholder="e.g. paid via eSewa, contact: 98XXXXXXXX"
+                className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
+              />
+            </div>
+
+            {subError && <InlineAlert>{subError}</InlineAlert>}
+
+            <div className="flex items-center gap-2">
+              <Button onClick={handleSaveSub} loading={subSaving} size="small">Save</Button>
+              <Button onClick={cancelSubEdit} variant="ghost" size="small" disabled={subSaving}>Cancel</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="body-md font-medium text-ink-primary">{PLAN_LABELS[cafe.plan]}</span>
+                <span className={`label-sm rounded-pill px-2.5 py-0.5 font-semibold capitalize ${STATUS_STYLES[cafe.subscriptionStatus]}`}>
+                  {cafe.subscriptionStatus}
+                </span>
+              </div>
+              <p className="body-sm text-ink-secondary">
+                {cafe.billingCycle === "yearly" ? "Yearly" : "Monthly"} billing
+                {cafe.nextBillingAt ? ` · Next: ${formatDate(cafe.nextBillingAt)}` : ""}
+                {" · "}Setup fee: {cafe.setupFeePaid ? "paid" : "not paid"}
+              </p>
+              <p className="body-sm text-ink-secondary">
+                Trial started: {formatDate(cafe.trialStartedAt)}
+              </p>
+              {cafe.subscriptionNotes && (
+                <p className="body-sm text-ink-faint italic">{cafe.subscriptionNotes}</p>
+              )}
+            </div>
+            <Button onClick={() => setEditingSub(true)} variant="secondary" size="small">Edit</Button>
+          </div>
+        )}
+      </SectionCard>
 
       {/* VAT Settings */}
       <SectionCard icon={<IconReceipt />} title="VAT / Tax settings" description="Enable VAT for this cafe to show tax breakdowns on bills and receipts.">

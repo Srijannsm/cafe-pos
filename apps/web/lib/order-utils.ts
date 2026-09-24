@@ -11,6 +11,7 @@ export type OrderItemData = {
   quantity: number;
   price: string;
   status: "pending" | "ready" | "served";
+  sentToKitchen: boolean;
   menuItem: { id: number; name: string };
   orderItemModifiers: { id: number; modifier: Modifier }[];
 };

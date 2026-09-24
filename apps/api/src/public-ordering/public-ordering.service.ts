@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OrdersService } from '../orders/orders.service.js';
 import { PlaceOrderDto } from './dto/place-order.dto.js';
+import { assertQrOrderingAllowed } from '../subscription/plan-limits.js';
 
 @Injectable()
 export class PublicOrderingService {
@@ -37,6 +38,9 @@ export class PublicOrderingService {
   async getTableForOrdering(qrToken: string) {
     const table = await this.findTableOrThrow(qrToken);
 
+    // Gate QR ordering by plan -- Starter cafes don't get self-ordering.
+    assertQrOrderingAllowed(table.cafe);
+
     const [menu, activeOrder] = await Promise.all([
       this.prisma.menuItem.findMany({
         where: { cafeId: table.cafeId, isAvailable: true },
@@ -67,6 +71,10 @@ export class PublicOrderingService {
 
   async placeOrder(qrToken: string, dto: PlaceOrderDto) {
     const table = await this.findTableOrThrow(qrToken);
+
+    // Gate QR ordering by plan -- checked on both read AND write so that
+    // a plan downgrade mid-session takes effect on the next request.
+    assertQrOrderingAllowed(table.cafe);
 
     let order = await this.findActiveOrder(table.cafeId, table.id);
 

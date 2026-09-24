@@ -8,5 +8,6 @@ import { AuthModule } from '../auth/auth.module.js';
   imports: [PrismaModule, AuthModule],
   controllers: [TablesController],
   providers: [TablesService],
+  exports: [TablesService],
 })
 export class TablesModule {}

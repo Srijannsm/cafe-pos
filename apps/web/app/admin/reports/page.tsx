@@ -425,13 +425,14 @@ export default function ReportsPage() {
 
   const [loading, setLoading]         = useState(true);
   const [loadError, setLoadError]     = useState(false);
+  const [planBlocked, setPlanBlocked] = useState(false);
   const [summary, setSummary]         = useState<Summary | null>(null);
   const [periodData, setPeriodData]   = useState<PeriodBucket[]>([]);
   const [topItems, setTopItems]       = useState<TopItem[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
 
   const fetchAll = useCallback(async (from: string, to: string, gb: GroupBy) => {
-    setLoading(true); setLoadError(false);
+    setLoading(true); setLoadError(false); setPlanBlocked(false);
     const q = `from=${from}&to=${to}&groupBy=${gb}`;
     try {
       const [s, p, ti, pm] = await Promise.all([
@@ -441,7 +442,14 @@ export default function ReportsPage() {
         apiFetchJson<PaymentMethodRow[]>(`/reports/payment-methods?${q}`),
       ]);
       setSummary(s); setPeriodData(p); setTopItems(ti); setPaymentMethods(pm);
-    } catch { setLoadError(true); }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.toLowerCase().includes("not available on your current plan") || msg.toLowerCase().includes("upgrade to standard")) {
+        setPlanBlocked(true);
+      } else {
+        setLoadError(true);
+      }
+    }
     finally { setLoading(false); }
   }, []);
 
@@ -559,8 +567,22 @@ export default function ReportsPage() {
         )}
       </div>
 
+      {/* ── Plan blocked state ── */}
+      {planBlocked && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-border-subtle bg-surface-raised p-12 text-center shadow-sm">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-amber-500">
+            <IconBarChart className="h-7 w-7" />
+          </div>
+          <h2 className="body-lg font-bold text-ink-primary mb-2">Reports not available on your plan</h2>
+          <p className="body-md text-ink-secondary max-w-sm">
+            Upgrade to the <strong>Standard</strong> or <strong>Premium</strong> plan to unlock sales analytics, top sellers, and payment breakdowns.
+          </p>
+          <p className="label-sm text-ink-faint mt-4">Contact your platform administrator to upgrade.</p>
+        </div>
+      )}
+
       {/* ── Error state ── */}
-      {loadError && (
+      {!planBlocked && loadError && (
         <ErrorState
           title="Couldn't load reports"
           description="The report data didn't come through — check your connection and try again."
@@ -568,7 +590,7 @@ export default function ReportsPage() {
         />
       )}
 
-      {!loadError && (
+      {!planBlocked && !loadError && (
         <>
           {/* ── KPI row ── */}
           <div className="grid gap-4 sm:grid-cols-3">

@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetchJson } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
 import { useOrdersSocket } from "../../lib/useOrdersSocket";
 import { NavBar } from "../../components/NavBar";
-import { IconClock, IconInbox, IconAlert } from "../../components/icons";
+import { IconClock, IconInbox, IconAlert, IconCheck } from "../../components/icons";
 import { Card } from "../../components/ui/Card";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Button } from "../../components/ui/Button";
@@ -38,6 +38,30 @@ function urgencyLevel(minutes: number): "none" | "warning" | "danger" {
   return "none";
 }
 
+/** Play a short chime using the Web Audio API — no external assets needed. */
+function playNewOrderChime() {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = ctx.currentTime + i * 0.12;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+      osc.start(start);
+      osc.stop(start + 0.35);
+    });
+  } catch {
+    // Silently ignore — AudioContext may not be available in all environments
+  }
+}
+
 export default function KitchenPage() {
   const ready = useRequireAuth();
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
@@ -45,18 +69,30 @@ export default function KitchenPage() {
   const [loadError, setLoadError] = useState(false);
   const [, setTick] = useState(0); // drives per-second re-render for live timers
   const [exitingIds, setExitingIds] = useState<Set<number>>(new Set());
+  const [markingAllIds, setMarkingAllIds] = useState<Set<number>>(new Set());
+  const knownOrderIds = useRef<Set<number>>(new Set());
+  const isFirstLoad = useRef(true);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, []);
 
-  const loadOrders = useCallback(() => {
+  const loadOrders = useCallback((isInitial = false) => {
     return apiFetchJson<KitchenOrder[]>("/orders?status=preparing")
       .then((res) => {
-        // Don't restore cards that are in the middle of their exit animation
         setExitingIds((exiting) => {
-          setOrders(res.filter((o) => !exiting.has(o.id)));
+          const visible = res.filter((o) => !exiting.has(o.id));
+
+          // Play chime for brand-new orders (not on the very first load)
+          if (!isFirstLoad.current) {
+            const newOnes = visible.filter((o) => !knownOrderIds.current.has(o.id));
+            if (newOnes.length > 0) playNewOrderChime();
+          }
+          isFirstLoad.current = false;
+
+          knownOrderIds.current = new Set(visible.map((o) => o.id));
+          setOrders(visible);
           return exiting;
         });
         setLoadError(false);
@@ -66,19 +102,26 @@ export default function KitchenPage() {
 
   useEffect(() => {
     if (!ready) return;
-    loadOrders().finally(() => setInitialLoading(false));
-    const interval = setInterval(loadOrders, 5000);
+    loadOrders(true).finally(() => setInitialLoading(false));
+    const interval = setInterval(() => loadOrders(), 5000);
     return () => clearInterval(interval);
   }, [ready, loadOrders]);
 
-  // Push: a waiter's "Send to Kitchen" shows up here immediately instead of
-  // waiting for the next 5s poll. The poll above stays as a fallback.
   const { connected } = useOrdersSocket(ready, {
     onSentToKitchen: () => loadOrders(),
   });
 
+  /** Trigger exit animation then remove the order card */
+  function triggerExit(orderId: number) {
+    setExitingIds((prev) => new Set([...prev, orderId]));
+    setTimeout(() => {
+      setOrders((curr) => curr.filter((o) => o.id !== orderId));
+      setExitingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+      knownOrderIds.current.delete(orderId);
+    }, 400);
+  }
+
   async function markReady(orderItemId: number) {
-    // Optimistically update item status
     setOrders((current) => {
       const updated = current.map((order) => ({
         ...order,
@@ -86,16 +129,10 @@ export default function KitchenPage() {
           item.id === orderItemId ? { ...item, status: "ready" as const } : item,
         ),
       }));
-      // If all items on this order are now ready, trigger slide-out animation
       for (const order of updated) {
         const allReady = order.orderItems.length > 0 && order.orderItems.every((i) => i.status === "ready");
         if (allReady && order.orderItems.some((i) => i.id === orderItemId)) {
-          setExitingIds((prev) => new Set([...prev, order.id]));
-          // Remove from list after animation completes
-          setTimeout(() => {
-            setOrders((curr) => curr.filter((o) => o.id !== order.id));
-            setExitingIds((prev) => { const s = new Set(prev); s.delete(order.id); return s; });
-          }, 400);
+          triggerExit(order.id);
         }
       }
       return updated;
@@ -103,9 +140,35 @@ export default function KitchenPage() {
     try {
       await apiFetchJson(`/orders/items/${orderItemId}/ready`, { method: "PATCH" });
     } finally {
-      // Delay refresh so exiting cards finish their slide-out before the poll
-      // can restore them. The 5s interval + socket handles fresh orders anyway.
-      setTimeout(loadOrders, 500);
+      setTimeout(() => loadOrders(), 500);
+    }
+  }
+
+  async function markAllReady(order: KitchenOrder) {
+    const pendingItems = order.orderItems.filter((i) => i.status === "pending");
+    if (pendingItems.length === 0) return;
+
+    setMarkingAllIds((prev) => new Set([...prev, order.id]));
+
+    // Optimistically mark all as ready
+    setOrders((current) =>
+      current.map((o) =>
+        o.id === order.id
+          ? { ...o, orderItems: o.orderItems.map((i) => ({ ...i, status: "ready" as const })) }
+          : o,
+      ),
+    );
+    triggerExit(order.id);
+
+    try {
+      await Promise.all(
+        pendingItems.map((item) =>
+          apiFetchJson(`/orders/items/${item.id}/ready`, { method: "PATCH" }),
+        ),
+      );
+    } finally {
+      setMarkingAllIds((prev) => { const s = new Set(prev); s.delete(order.id); return s; });
+      setTimeout(() => loadOrders(), 500);
     }
   }
 
@@ -113,7 +176,14 @@ export default function KitchenPage() {
     <main id="main-content" data-theme="dark" className="min-h-screen bg-surface-canvas">
       <NavBar />
       <div className="p-4 sm:p-6">
-        <h1 className="display-md mb-4 text-ink-primary">Kitchen</h1>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <h1 className="display-md text-ink-primary">Kitchen</h1>
+          {orders.length > 0 && (
+            <p className="body-sm text-ink-faint">
+              {orders.length} order{orders.length !== 1 ? "s" : ""} in queue
+            </p>
+          )}
+        </div>
 
         {ready && !connected && (
           <div className="mb-5 flex items-center gap-2 rounded-lg border border-status-warning bg-status-warning-tint px-4 py-3 text-sm font-medium text-status-warning-ink">
@@ -143,7 +213,7 @@ export default function KitchenPage() {
             description="The kitchen queue didn't come through — check your connection and try again."
             onRetry={() => {
               setInitialLoading(true);
-              loadOrders().finally(() => setInitialLoading(false));
+              loadOrders(true).finally(() => setInitialLoading(false));
             }}
           />
         ) : orders.length === 0 ? (
@@ -157,6 +227,11 @@ export default function KitchenPage() {
             {orders.map((order) => {
               const minutes = elapsedMinutes(order.createdAt);
               const level = urgencyLevel(minutes);
+              const readyCount = order.orderItems.filter((i) => i.status === "ready").length;
+              const totalCount = order.orderItems.length;
+              const allReady = readyCount === totalCount && totalCount > 0;
+              const isMarkingAll = markingAllIds.has(order.id);
+
               return (
                 <Card
                   key={order.id}
@@ -168,9 +243,23 @@ export default function KitchenPage() {
                     </>
                   }
                   action={
-                    <StatusBadge tone={level === "none" ? "neutral" : level} icon={IconClock}>
-                      {minutes < 1 ? "just now" : `${minutes}m`}
-                    </StatusBadge>
+                    <div className="flex items-center gap-2">
+                      {/* Item progress pill */}
+                      <span
+                        className={`label-sm rounded-pill px-2 py-0.5 font-semibold ${
+                          allReady
+                            ? "bg-status-success-tint text-status-success-ink"
+                            : readyCount > 0
+                              ? "bg-status-warning-tint text-status-warning-ink"
+                              : "bg-surface-sunken text-ink-faint"
+                        }`}
+                      >
+                        {readyCount}/{totalCount}
+                      </span>
+                      <StatusBadge tone={level === "none" ? "neutral" : level} icon={IconClock}>
+                        {minutes < 1 ? "just now" : `${minutes}m`}
+                      </StatusBadge>
+                    </div>
                   }
                 >
                   <div className="grid gap-2">
@@ -201,6 +290,21 @@ export default function KitchenPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Mark all ready — only show when there are multiple pending items */}
+                  {order.orderItems.filter((i) => i.status === "pending").length > 1 && (
+                    <div className="mt-3 border-t border-border-subtle pt-3">
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        disabled={isMarkingAll}
+                        onClick={() => markAllReady(order)}
+                      >
+                        <IconCheck className="h-4 w-4 mr-1.5" />
+                        {isMarkingAll ? "Marking all ready…" : "Mark all ready"}
+                      </Button>
+                    </div>
+                  )}
                 </Card>
               );
             })}

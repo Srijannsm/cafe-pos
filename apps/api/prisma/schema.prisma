@@ -71,6 +71,23 @@ model PlatformUser {
   @@map("platform_users")
 }
 
+enum SubscriptionPlan {
+  starter
+  standard
+  premium
+
+  @@map("subscription_plan")
+}
+
+enum SubscriptionStatus {
+  trial
+  active
+  overdue
+  cancelled
+
+  @@map("subscription_status")
+}
+
 model Cafe {
   id        Int      @id @default(autoincrement())
   name      String
@@ -85,6 +102,18 @@ model Cafe {
   vatRate    Decimal  @default(13)
   panNumber      String?
   lastBillNumber Int     @default(0)
+
+  // Logo
+  logoUrl        String?
+
+  // Subscription
+  plan               SubscriptionPlan    @default(starter)
+  billingCycle       String              @default("monthly") // "monthly" | "yearly"
+  subscriptionStatus SubscriptionStatus  @default(trial)
+  trialStartedAt     DateTime            @default(now())
+  nextBillingAt      DateTime?
+  setupFeePaid       Boolean             @default(false)
+  subscriptionNotes  String?
 
   users          User[]
   tables         RestaurantTable[]
@@ -125,6 +154,14 @@ model RestaurantTable {
   // sequential numbers. Rotatable via the admin "regenerate QR" action if
   // a printed code is ever compromised.
   qrToken String @unique @default(cuid())
+
+  // Physical table merge: when set, this table has been absorbed into
+  // another (the primary) table for a combined seating/order. The secondary
+  // table's status is set to 'reserved' so it's hidden from the floor view.
+  // The primary table's mergedFrom relation lists all tables absorbed into it.
+  mergedIntoId  Int?
+  mergedInto    RestaurantTable?  @relation("TableMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom    RestaurantTable[] @relation("TableMerge")
 
   cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
@@ -216,12 +253,13 @@ model Order {
 }
 
 model OrderItem {
-  id         Int             @id @default(autoincrement())
-  quantity   Int             @default(1)
-  price      Decimal
-  status     OrderItemStatus @default(pending)
-  orderId    Int
-  menuItemId Int
+  id              Int             @id @default(autoincrement())
+  quantity        Int             @default(1)
+  price           Decimal
+  status          OrderItemStatus @default(pending)
+  sentToKitchen   Boolean         @default(false)
+  orderId         Int
+  menuItemId      Int
 
   // Scoped transitively through order, same reasoning as Modifier above.
   order              Order               @relation(fields: [orderId], references: [id])

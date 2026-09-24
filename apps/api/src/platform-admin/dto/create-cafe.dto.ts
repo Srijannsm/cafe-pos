@@ -1,4 +1,14 @@
-import { IsNotEmpty, IsString, Length, Matches } from 'class-validator';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class CreateCafeDto {
   @IsString()
@@ -21,4 +31,18 @@ export class CreateCafeDto {
   @IsString()
   @Length(4, 4)
   adminPin: string;
+
+  @IsOptional()
+  @IsBoolean()
+  vatEnabled?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  vatRate?: number;
+
+  @IsOptional()
+  @IsString()
+  panNumber?: string | null;
 }

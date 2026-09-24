@@ -12,6 +12,9 @@ const CAFE_SUMMARY_SELECT = {
   vatEnabled: true,
   vatRate: true,
   panNumber: true,
+  plan: true,
+  subscriptionStatus: true,
+  nextBillingAt: true,
   createdAt: true,
   _count: { select: { users: true, orders: true } },
 } as const;
@@ -49,6 +52,14 @@ export class PlatformAdminService {
         vatEnabled: true,
         vatRate: true,
         panNumber: true,
+        logoUrl: true,
+        plan: true,
+        billingCycle: true,
+        subscriptionStatus: true,
+        trialStartedAt: true,
+        nextBillingAt: true,
+        setupFeePaid: true,
+        subscriptionNotes: true,
         createdAt: true,
         users: {
           select: { id: true, name: true, role: true, isActive: true },
@@ -90,11 +101,17 @@ export class PlatformAdminService {
       data: {
         name: dto.name,
         slug: dto.slug,
+        vatEnabled: dto.vatEnabled ?? false,
+        vatRate: dto.vatEnabled && dto.vatRate != null ? dto.vatRate : 0,
+        panNumber: dto.vatEnabled ? (dto.panNumber ?? null) : null,
         users: {
           create: { name: dto.adminName, pinHash, role: 'admin' },
         },
       },
-      select: CAFE_SUMMARY_SELECT,
+      select: {
+        ...CAFE_SUMMARY_SELECT,
+        users: { select: { id: true, name: true, role: true } },
+      },
     });
   }
 
@@ -110,6 +127,15 @@ export class PlatformAdminService {
     if (dto.vatEnabled !== undefined) data.vatEnabled = dto.vatEnabled;
     if (dto.vatRate !== undefined) data.vatRate = dto.vatRate;
     if ('panNumber' in dto) data.panNumber = dto.panNumber ?? null;
+    if ('logoUrl' in dto) data.logoUrl = dto.logoUrl ?? null;
+    if (dto.plan !== undefined) data.plan = dto.plan;
+    if (dto.billingCycle !== undefined) data.billingCycle = dto.billingCycle;
+    if (dto.subscriptionStatus !== undefined) data.subscriptionStatus = dto.subscriptionStatus;
+    if ('nextBillingAt' in dto) {
+      data.nextBillingAt = dto.nextBillingAt ? new Date(dto.nextBillingAt) : null;
+    }
+    if (dto.setupFeePaid !== undefined) data.setupFeePaid = dto.setupFeePaid;
+    if ('subscriptionNotes' in dto) data.subscriptionNotes = dto.subscriptionNotes ?? null;
 
     return this.prisma.cafe.update({
       where: { id },

@@ -4,7 +4,7 @@ type PriceDisplayProps = {
 };
 
 export function PriceDisplay({ amount, size = "md" }: PriceDisplayProps) {
-  const value = typeof amount === "number" ? amount.toFixed(2) : amount;
+  const value = Number(amount).toFixed(2);
   const priceClass = size === "lg" ? "price-lg" : "price-md";
   return (
     <span className={`${priceClass} inline-flex items-baseline gap-1`}>

@@ -117,4 +117,26 @@ findOne(@CurrentUser() user: CurrentUserPayload, @Param('orderId', ParseIntPipe)
     return this.ordersService.updateNotes(user.cafeId, orderId, dto);
   }
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin')
+  @Patch(':sourceOrderId/merge-into/:targetOrderId')
+  mergeInto(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('sourceOrderId', ParseIntPipe) sourceOrderId: number,
+    @Param('targetOrderId', ParseIntPipe) targetOrderId: number,
+  ) {
+    return this.ordersService.mergeInto(user.cafeId, sourceOrderId, targetOrderId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin')
+  @Patch(':orderId/move-to-table/:tableId')
+  moveToTable(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('tableId', ParseIntPipe) tableId: number,
+  ) {
+    return this.ordersService.moveToTable(user.cafeId, orderId, tableId);
+  }
+
 }

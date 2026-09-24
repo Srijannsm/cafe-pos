@@ -7,6 +7,7 @@ import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
 import { AdjustStockDto } from './dto/adjust-stock.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
 import { UpdateModifierDto } from './dto/update-modifier.dto.js';
+import { assertNotOverdue, assertMenuItemLimit } from '../subscription/plan-limits.js';
 
 @Injectable()
 export class MenuService {
@@ -45,6 +46,17 @@ export class MenuService {
     // The category has to belong to the same cafe as the item, or a menu
     // item could end up filed under another cafe's category.
     await this.findCategoryOrThrow(cafeId, dto.categoryId);
+
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+      where: { id: cafeId },
+      select: { plan: true, subscriptionStatus: true },
+    });
+
+    assertNotOverdue(cafe);
+
+    const itemCount = await this.prisma.menuItem.count({ where: { cafeId } });
+    assertMenuItemLimit(cafe, itemCount);
+
     return this.prisma.menuItem.create({ data: { ...dto, cafeId } });
   }
 
