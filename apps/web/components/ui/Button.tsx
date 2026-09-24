@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
-  size?: "default" | "large";
+  size?: "default" | "large" | "small";
   icon?: ReactNode;
   loading?: boolean;
 };
@@ -20,6 +20,7 @@ const VARIANT_STYLES: Record<NonNullable<ButtonProps["variant"]>, string> = {
 const SIZE_STYLES: Record<NonNullable<ButtonProps["size"]>, string> = {
   default: "min-h-12 px-5 text-sm",
   large: "min-h-14 px-6 text-base",
+  small: "min-h-8 px-3 text-xs",
 };
 
 function Spinner() {

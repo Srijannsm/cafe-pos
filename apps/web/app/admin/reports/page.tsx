@@ -49,26 +49,26 @@ function fmtRsFull(n: number | string) {
 
 function fmtPeriod(period: string, groupBy: GroupBy): string {
   if (groupBy === "day") {
-    const [y, m, d] = period.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const parts = period.split("-").map(Number);
+    return new Date(parts[0]!, parts[1]! - 1, parts[2]!).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
   if (groupBy === "week") return period;
   if (groupBy === "month") {
-    const [y, m] = period.split("-").map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    const parts = period.split("-").map(Number);
+    return new Date(parts[0]!, parts[1]! - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
   }
   return period;
 }
 
 function fmtPeriodFull(period: string, groupBy: GroupBy): string {
   if (groupBy === "day") {
-    const [y, m, d] = period.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    const parts = period.split("-").map(Number);
+    return new Date(parts[0]!, parts[1]! - 1, parts[2]!).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   }
   if (groupBy === "week") return period;
   if (groupBy === "month") {
-    const [y, m] = period.split("-").map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const parts = period.split("-").map(Number);
+    return new Date(parts[0]!, parts[1]! - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
   }
   return period;
 }
@@ -456,12 +456,13 @@ export default function ReportsPage() {
   useEffect(() => {
     if (customMode) return;
     const p = PRESETS[presetIdx];
+    if (!p) return;
     fetchAll(p.from(), p.to(), groupBy);
   }, [presetIdx, groupBy, customMode, fetchAll]);
 
   function applyPreset(idx: number) {
     setPresetIdx(idx);
-    setGroupBy(PRESETS[idx].groupBy);
+    setGroupBy(PRESETS[idx]!.groupBy);
     setCustomMode(false);
   }
 
@@ -586,7 +587,7 @@ export default function ReportsPage() {
         <ErrorState
           title="Couldn't load reports"
           description="The report data didn't come through — check your connection and try again."
-          onRetry={() => customMode ? applyCustom() : fetchAll(PRESETS[presetIdx]?.from(), PRESETS[presetIdx]?.to(), groupBy)}
+          onRetry={() => customMode ? applyCustom() : fetchAll(PRESETS[presetIdx]?.from() ?? "", PRESETS[presetIdx]?.to() ?? "", groupBy)}
         />
       )}
 

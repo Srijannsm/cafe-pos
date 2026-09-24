@@ -161,7 +161,7 @@ export default function BillingPage() {
     );
   }
 
-  const planDisplay = PLAN_DISPLAY[planInfo.plan] ?? PLAN_DISPLAY.starter;
+  const planDisplay = (PLAN_DISPLAY[planInfo.plan] ?? PLAN_DISPLAY.starter)!;
 
   return (
     <div className="space-y-6">
