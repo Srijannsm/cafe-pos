@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const SOCKET_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000")
+  .replace(/\/api\/?$/, "");
 
 export type OrderSentToKitchenEvent = { orderId: number };
 export type OrderItemReadyEvent = { orderId: number; orderItemId: number };
@@ -37,7 +38,7 @@ export function useOrdersSocket(ready: boolean, handlers: Handlers): { connected
     const token = localStorage.getItem("accessToken");
     if (!token) return;
 
-    const socket: Socket = io(API_URL, { auth: { token } });
+    const socket: Socket = io(SOCKET_URL, { auth: { token } });
 
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
