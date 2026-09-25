@@ -22,7 +22,7 @@ export type OrderItemReadyEvent = {
 // single cafe, but once a second tenant is on this deployment that would
 // leak one cafe's kitchen/order events to every other cafe's screens.
 @WebSocketGateway({
-  cors: { origin: 'http://localhost:3000', credentials: true },
+  cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
 })
 export class OrdersGateway implements OnGatewayConnection {
   private readonly logger = new Logger(OrdersGateway.name);
