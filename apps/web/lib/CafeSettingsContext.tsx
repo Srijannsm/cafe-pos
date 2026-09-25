@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { apiFetchJson } from "./api";
 
 interface CafeSettings {
   name: string;
@@ -54,14 +53,10 @@ function applyTheme(themeColor: string | null) {
   if (!hsl) return;
   const { h, s, l } = hsl;
   const root = document.documentElement;
-  // brand = the base color
   root.style.setProperty("--color-brand", `oklch(from hsl(${h} ${s}% ${l}%) l c h)`);
-  // We set CSS vars using hsl directly since oklch conversion is complex
   root.style.setProperty("--brand-h", `${h}`);
   root.style.setProperty("--brand-s", `${s}%`);
   root.style.setProperty("--brand-l", `${l}%`);
-  // Override the actual Tailwind theme tokens via inline style on :root
-  // Use a <style> tag approach for broader compatibility
   let styleEl = document.getElementById("cafe-theme") as HTMLStyleElement | null;
   if (!styleEl) {
     styleEl = document.createElement("style");
@@ -86,11 +81,17 @@ export function CafeSettingsProvider({ children }: { children: ReactNode }) {
 
   async function fetchSettings() {
     try {
-      const data = await apiFetchJson<CafeSettings>("/cafes/settings");
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+      const res = await fetch(`${apiUrl}/cafes/settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const data = await res.json() as CafeSettings;
       setSettings(data);
       applyTheme(data.themeColor);
     } catch {
-      // Not logged in yet, or not admin — skip silently
+      // skip
     } finally {
       setLoading(false);
     }
