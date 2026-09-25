@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, apiFetchJson, type CurrentUser } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
-import { IconGrid, IconClipboardList, IconTable, IconUsers, IconLogout, IconClock, IconBarChart, IconMenu, IconX, IconBanknote } from "../../components/icons";
+import { useCafeSettings, API_BASE } from "../../lib/CafeSettingsContext";
+import { IconGrid, IconClipboardList, IconTable, IconUsers, IconLogout, IconClock, IconBarChart, IconMenu, IconX, IconBanknote, IconSettings } from "../../components/icons";
 import { NotificationBell } from "../../components/NotificationBell";
 import { NavItem } from "../../components/ui/NavItem";
 import { Skeleton } from "../../components/ui/Skeleton";
@@ -16,6 +18,7 @@ const ALL_NAV_ITEMS = [
   { href: "/admin/users", label: "Staff & PINs", icon: IconUsers },
   { href: "/admin/reports", label: "Reports", icon: IconBarChart, requiresReports: true },
   { href: "/admin/billing", label: "Billing & Plan", icon: IconBanknote },
+  { href: "/admin/settings", label: "App Settings", icon: IconSettings },
 ];
 
 const FLOOR_LINKS = [
@@ -32,6 +35,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [reportsEnabled, setReportsEnabled] = useState(false);
+  const { settings } = useCafeSettings();
+
+  const cafeName = settings?.name ?? "Cafe POS";
+  const logoUrl = settings?.logoUrl ? `${API_BASE}${settings.logoUrl}` : null;
 
   useEffect(() => {
     if (!ready) return;
@@ -42,13 +49,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
     setUser(current);
     setAuthorized(true);
-    // Fetch plan info to gate Reports nav item
     apiFetchJson<{ features: { reports: boolean } }>("/cafes/my-plan")
       .then((data) => setReportsEnabled(data.features.reports))
       .catch(() => setReportsEnabled(false));
   }, [ready, router]);
 
-  // Close sidebar on route change (mobile)
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
@@ -68,7 +73,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex min-h-screen bg-surface-canvas">
-      {/* Mobile backdrop */}
       {sidebarOpen && (
         <button
           type="button"
@@ -78,7 +82,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`print:hidden fixed inset-y-0 left-0 z-50 flex w-60 shrink-0 flex-col border-r border-border-subtle bg-surface-raised transition-transform duration-200 ease-in-out md:static md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -86,9 +89,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       >
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-5">
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-brand" />
+            {logoUrl ? (
+              <img src={logoUrl} alt={cafeName} className="h-8 w-8 rounded-md object-cover" />
+            ) : (
+              <span className="h-2.5 w-2.5 rounded-full bg-brand" />
+            )}
             <div>
-              <div className="font-display text-sm font-bold text-ink-primary">Cafe POS</div>
+              <div className="font-display text-sm font-bold text-ink-primary">{cafeName}</div>
               <div className="label-sm text-ink-faint">Admin</div>
             </div>
           </div>
@@ -123,7 +130,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </div>
 
-        <div className="body-sm border-t border-border-subtle px-5 py-4 text-ink-faint">Powered by Cafe POS</div>
+        <div className="body-sm border-t border-border-subtle px-5 py-4 text-ink-faint">
+          Powered by {cafeName}
+        </div>
       </aside>
 
       <div className="flex flex-1 flex-col">

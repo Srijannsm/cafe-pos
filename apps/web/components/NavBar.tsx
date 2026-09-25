@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, apiFetchJson, type CurrentUser } from "../lib/api";
+import { useCafeSettings, API_BASE } from "../lib/CafeSettingsContext";
 import { IconLogout } from "./icons";
 import { Dropdown } from "./ui/Dropdown";
 
@@ -24,6 +26,7 @@ export function NavBar() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [billedCount, setBilledCount] = useState(0);
+  const { settings } = useCafeSettings();
 
   useEffect(() => {
     setUser(getCurrentUser());
@@ -53,9 +56,11 @@ export function NavBar() {
         : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary"
     }`;
 
+  const cafeName = settings?.name ?? "Cafe POS";
+  const logoUrl = settings?.logoUrl ? `${API_BASE}${settings.logoUrl}` : null;
+
   return (
     <>
-      {/* Skip navigation link — visible on focus for keyboard/screen-reader users */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-surface-raised focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink-primary focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-focus-ring"
@@ -69,16 +74,16 @@ export function NavBar() {
       >
         <div className="flex items-center gap-4">
           <span className="hidden items-center gap-1.5 font-display text-sm font-bold text-ink-primary sm:flex">
-            <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
-            Cafe POS
+            {logoUrl ? (
+              <img src={logoUrl} alt={cafeName} className="h-6 w-6 rounded object-cover" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
+            )}
+            {cafeName}
           </span>
           <div className="flex gap-1.5" role="list">
-            <Link href="/" className={linkClass("/")} role="listitem">
-              Tables
-            </Link>
-            <Link href="/kitchen" className={linkClass("/kitchen")} role="listitem">
-              Kitchen
-            </Link>
+            <Link href="/" className={linkClass("/")} role="listitem">Tables</Link>
+            <Link href="/kitchen" className={linkClass("/kitchen")} role="listitem">Kitchen</Link>
             <Link href="/billing" className={`${linkClass("/billing")} relative`} role="listitem">
               Billing
               {billedCount > 0 && (
@@ -88,9 +93,7 @@ export function NavBar() {
               )}
             </Link>
             {user?.role === "admin" && (
-              <Link href="/admin" className={linkClass("/admin")} role="listitem">
-                Admin
-              </Link>
+              <Link href="/admin" className={linkClass("/admin")} role="listitem">Admin</Link>
             )}
           </div>
         </div>
@@ -119,13 +122,7 @@ export function NavBar() {
                   {user.name.charAt(0).toUpperCase()}
                 </button>
               }
-              items={[
-                {
-                  label: "Log out",
-                  icon: IconLogout,
-                  onClick: handleLogout,
-                },
-              ]}
+              items={[{ label: "Log out", icon: IconLogout, onClick: handleLogout }]}
             />
           </div>
         )}

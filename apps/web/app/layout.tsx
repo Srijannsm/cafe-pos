@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import { CafeSettingsProvider } from "../lib/CafeSettingsContext";
 
 const manrope = Manrope({
   subsets: ["latin"],
@@ -53,7 +54,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${manrope.variable} ${publicSans.variable} ${plexMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <CafeSettingsProvider>
+          {children}
+        </CafeSettingsProvider>
+      </body>
     </html>
   );
 }

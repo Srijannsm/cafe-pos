@@ -105,6 +105,7 @@ model Cafe {
 
   // Logo
   logoUrl        String?
+  themeColor     String?  // hex, e.g. "#e85d26"
 
   // Subscription
   plan               SubscriptionPlan    @default(starter)

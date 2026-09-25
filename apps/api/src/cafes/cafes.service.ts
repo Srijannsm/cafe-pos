@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PLAN_LIMITS } from '../subscription/plan-limits.js';
+import { UpdateCafeSettingsDto } from './dto/update-cafe-settings.dto.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 type PlanKey = keyof typeof PLAN_LIMITS;
 
@@ -8,9 +11,6 @@ type PlanKey = keyof typeof PLAN_LIMITS;
 export class CafesService {
   constructor(private prisma: PrismaService) {}
 
-  // Every other lookup in this module goes through here first -- the slug
-  // in the URL is the only thing identifying which cafe's data a request
-  // is even allowed to touch before anyone has logged in.
   async findBySlugOrThrow(slug: string) {
     const cafe = await this.prisma.cafe.findUnique({ where: { slug } });
     if (!cafe || !cafe.isActive) {
@@ -19,22 +19,77 @@ export class CafesService {
     return cafe;
   }
 
-  // Public, pre-login: the /c/:slug/login page calls this to confirm the
-  // slug is real and get a display name, before it ever shows a PIN pad.
   async findPublicBySlug(slug: string) {
     const cafe = await this.findBySlugOrThrow(slug);
     return { id: cafe.id, name: cafe.name, slug: cafe.slug };
   }
 
-  // Public, pre-login: replaces the old global /users/login-options --
-  // that used to list every active user across every cafe, which is
-  // obviously wrong once there's more than one cafe on the platform.
   async findStaffForLogin(slug: string) {
     const cafe = await this.findBySlugOrThrow(slug);
     return this.prisma.user.findMany({
       where: { cafeId: cafe.id, isActive: true },
       select: { id: true, name: true, role: true },
     });
+  }
+
+  /** Returns full cafe settings for the admin settings page */
+  async getSettings(cafeId: number) {
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+      where: { id: cafeId },
+      select: {
+        name: true,
+        slug: true,
+        logoUrl: true,
+        themeColor: true,
+        vatEnabled: true,
+        vatRate: true,
+        panNumber: true,
+      },
+    });
+    return cafe;
+  }
+
+  /** Update name and/or themeColor */
+  async updateSettings(cafeId: number, dto: UpdateCafeSettingsDto) {
+    return this.prisma.cafe.update({
+      where: { id: cafeId },
+      data: {
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.themeColor !== undefined && { themeColor: dto.themeColor }),
+      },
+      select: { name: true, slug: true, logoUrl: true, themeColor: true },
+    });
+  }
+
+  /** Save uploaded logo file and store its public URL */
+  async uploadLogo(cafeId: number, file: { originalname: string; mimetype: string; buffer: Buffer; size: number }) {
+    // Save to public/uploads/logos/
+    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'logos');
+    fs.mkdirSync(uploadsDir, { recursive: true });
+
+    const rawExt = path.extname(file.originalname).toLowerCase();
+    const ext = (rawExt === '.jfif' || rawExt === '.jpeg') ? '.jpg' : (rawExt || '.jpg');
+    const filename = `cafe-${cafeId}-${Date.now()}${ext}`;
+    const filePath = path.join(uploadsDir, filename);
+    fs.writeFileSync(filePath, file.buffer);
+
+    const logoUrl = `/uploads/logos/${filename}`;
+    await this.prisma.cafe.update({
+      where: { id: cafeId },
+      data: { logoUrl },
+    });
+    return { logoUrl };
+  }
+
+  /** Remove logo */
+  async deleteLogo(cafeId: number) {
+    const cafe = await this.prisma.cafe.findUniqueOrThrow({ where: { id: cafeId }, select: { logoUrl: true } });
+    if (cafe.logoUrl) {
+      const filePath = path.join(process.cwd(), 'public', cafe.logoUrl);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+    await this.prisma.cafe.update({ where: { id: cafeId }, data: { logoUrl: null } });
+    return { logoUrl: null };
   }
 
   /** Returns the cafe's plan info and feature flags for frontend gating. */
@@ -44,7 +99,6 @@ export class CafesService {
       select: { plan: true, subscriptionStatus: true, nextBillingAt: true },
     });
 
-    // Trial mirrors Premium limits; overdue is special (read-only)
     const planKey: PlanKey =
       cafe.subscriptionStatus === 'trial' ? 'trial' : ((cafe.plan ?? 'starter') as PlanKey);
 
