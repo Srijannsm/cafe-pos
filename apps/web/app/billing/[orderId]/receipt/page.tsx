@@ -131,6 +131,7 @@ export default function ReceiptPage({ params }: { params: Promise<{ orderId: str
       </div>
 
       <div className="mx-auto max-w-md p-4 sm:p-6 print:p-0">
+        <style>{`@media print { @page { size: 80mm auto; margin: 0; } }`}</style>
         <div className="receipt-print overflow-hidden rounded-lg border border-border-subtle bg-surface-raised p-5 shadow-sm print:rounded-none print:border-0 print:shadow-none">
           {/* Header */}
           <div className="border-b-2 border-dashed border-border-subtle pb-4 text-center">

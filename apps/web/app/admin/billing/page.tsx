@@ -62,7 +62,7 @@ type BillOrder = {
   subtotal: string | null;
   vatAmount: string | null;
   totalAmount: string | null;
-  table: { label: string } | null;
+  table: { tableNumber: string } | null;
   waiter: { name: string } | null;
   orderItems: OrderItem[];
   payments: Payment[];
@@ -187,7 +187,7 @@ function BillModal({ order, onClose }: { order: BillOrder; onClose: () => void }
         </div>
         <div class="divider"></div>
         <div class="row sm">
-          <span>Table: ${order.table?.label ?? "—"}</span>
+          <span>Table: ${order.table?.tableNumber ?? "—"}</span>
           <span>Waiter: ${order.waiter?.name ?? "—"}</span>
         </div>
         <div class="row sm">
@@ -274,7 +274,7 @@ function BillModal({ order, onClose }: { order: BillOrder; onClose: () => void }
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-xl border border-border-subtle bg-surface-sunken p-4 text-sm">
             <div>
               <p className="text-xs text-ink-faint mb-0.5">Table</p>
-              <p className="font-semibold text-ink-primary">{order.table?.label ?? "—"}</p>
+              <p className="font-semibold text-ink-primary">{order.table?.tableNumber ?? "—"}</p>
             </div>
             <div>
               <p className="text-xs text-ink-faint mb-0.5">Waiter</p>
@@ -503,7 +503,7 @@ function BillLookup() {
               <div className="min-w-0">
                 <p className="font-bold text-ink-primary">Bill #{result.id}</p>
                 <p className="text-xs text-ink-faint mt-0.5 truncate">
-                  {result.table?.label ?? "No table"} · {result.waiter?.name ?? "Unknown"} · {formatDateTime(result.createdAt)}
+                  {result.table?.tableNumber ?? "No table"} · {result.waiter?.name ?? "Unknown"} · {formatDateTime(result.createdAt)}
                 </p>
               </div>
               <div className="text-right shrink-0">
