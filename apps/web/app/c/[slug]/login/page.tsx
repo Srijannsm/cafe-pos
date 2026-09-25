@@ -17,6 +17,7 @@ type CafeInfo = {
   id: number;
   name: string;
   slug: string;
+  logoUrl: string | null;
 };
 
 const AVATAR_TONES = [
@@ -111,9 +112,14 @@ export default function CafeLoginPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand">
-          ☕
-        </div>
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand overflow-hidden">
+  {cafe?.logoUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={cafe.logoUrl} alt={cafe?.name ?? ""} className="h-full w-full object-cover" />
+  ) : (
+    <span>☕</span>
+  )}
+</div>
         <h1 className="heading-lg text-ink-primary">{cafe ? cafe.name : "Who’s working today?"}</h1>
         <p className="body-md mt-1 text-ink-secondary">Tap your name, then enter your PIN</p>
       </div>

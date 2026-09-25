@@ -21,7 +21,7 @@ export class CafesService {
 
   async findPublicBySlug(slug: string) {
     const cafe = await this.findBySlugOrThrow(slug);
-    return { id: cafe.id, name: cafe.name, slug: cafe.slug };
+    return { id: cafe.id, name: cafe.name, slug: cafe.slug, logoUrl: cafe.logoUrl };
   }
 
   async findStaffForLogin(slug: string) {
