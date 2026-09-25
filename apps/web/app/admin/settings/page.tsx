@@ -316,7 +316,7 @@ export default function SettingsPage() {
             >
               <span
                 className={`h-9 w-9 rounded-full shadow transition-transform group-hover:scale-110 ${themeColor === p.hex ? "ring-2 ring-offset-2 scale-110" : ""}`}
-                style={{ backgroundColor: p.hex, ringColor: p.hex }}
+                style={{ backgroundColor: p.hex }}
               />
               <span className="text-[10px] text-ink-faint">{p.label}</span>
             </button>
