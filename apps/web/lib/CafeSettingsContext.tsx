@@ -30,10 +30,9 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
   if (!m) return null;
-  const hex = m[1]!;
-  let r = parseInt(hex.slice(0, 2), 16) / 255;
-  let g = parseInt(hex.slice(2, 4), 16) / 255;
-  let b = parseInt(hex.slice(4, 6), 16) / 255;
+  let r = parseInt(m[1]!.slice(0, 2), 16) / 255;
+  let g = parseInt(m[1]!.slice(2, 4), 16) / 255;
+  let b = parseInt(m[1]!.slice(4, 6), 16) / 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   let h = 0, s = 0;
   const l = (max + min) / 2;
