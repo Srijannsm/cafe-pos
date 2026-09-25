@@ -112,7 +112,7 @@ export default function CafeLoginPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand overflow-hidden">
+        <div className="mx-auto mb-3 flex h-20 w-20 items-center justify-center rounded-xl bg-brand text-lg font-bold text-on-brand overflow-hidden">
   {cafe?.logoUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={cafe.logoUrl} alt={cafe?.name ?? ""} className="h-full w-full object-cover" />
