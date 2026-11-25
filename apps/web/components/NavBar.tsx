@@ -26,11 +26,12 @@ export function NavBar() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [billedCount, setBilledCount] = useState(0);
-  const { settings } = useCafeSettings();
+  const { settings, refresh } = useCafeSettings();
 
   useEffect(() => {
     setUser(getCurrentUser());
-  }, []);
+    if (!settings) refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -40,7 +41,7 @@ export function NavBar() {
         .catch(() => {});
     }
     fetchBilledCount();
-    const interval = setInterval(fetchBilledCount, 15000);
+    const interval = setInterval(fetchBilledCount, 30000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -50,7 +51,7 @@ export function NavBar() {
   }
 
   const linkClass = (href: string) =>
-    `rounded-full px-4 py-2.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${
+    `rounded-lg px-3.5 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${
       pathname === href
         ? "bg-brand-tint text-brand-strong"
         : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary"

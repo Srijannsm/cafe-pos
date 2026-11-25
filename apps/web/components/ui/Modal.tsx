@@ -65,7 +65,7 @@ export function Modal({ open, onClose, title, size = "md", children }: ModalProp
 
   return (
     <div
-      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-overlay-backdrop p-4 backdrop-blur-sm"
+      className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-overlay-backdrop p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
@@ -75,7 +75,7 @@ export function Modal({ open, onClose, title, size = "md", children }: ModalProp
         aria-label={title}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className={`animate-pop w-full ${SIZE_CLASS[size]} rounded-xl bg-surface-raised p-6 shadow-lg outline-none`}
+        className={`animate-pop w-full ${SIZE_CLASS[size]} rounded-2xl bg-surface-raised p-6 shadow-lg outline-none max-h-[90vh] overflow-y-auto`}
       >
         <div className="mb-4 flex items-center justify-between gap-3">
           {title && <h2 className="heading-md text-ink-primary">{title}</h2>}

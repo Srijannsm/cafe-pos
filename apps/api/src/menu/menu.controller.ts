@@ -12,6 +12,8 @@ import { UpdateMenuItemDto } from './dto/update-menu-item.dto.js';
 import { AdjustStockDto } from './dto/adjust-stock.dto.js';
 import { CreateModifierDto } from './dto/create-modifier.dto.js';
 import { UpdateModifierDto } from './dto/update-modifier.dto.js';
+import { ReorderDto, SetRecipeDto } from './dto/reorder.dto.js';
+import { PlanFeatureGuard, RequiresFeature } from '../plans/plan-feature.guard.js';
 
 @Controller('menu')
 export class MenuController {
@@ -29,6 +31,26 @@ export class MenuController {
     @Get('all')
     findAllForAdmin(@CurrentUser() user: CurrentUserPayload) {
         return this.menuService.findAllForAdmin(user.cafeId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Get('popular')
+    popular(@CurrentUser() user: CurrentUserPayload) {
+        return this.menuService.popular(user.cafeId);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Patch('reorder')
+    reorder(@CurrentUser() user: CurrentUserPayload, @Body() dto: ReorderDto) {
+        return this.menuService.reorder(user.cafeId, dto);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Delete('categories/:id')
+    deleteCategory(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
+        return this.menuService.deleteCategory(user.cafeId, id);
     }
 
     @UseGuards(JwtAuthGuard)
@@ -71,6 +93,45 @@ export class MenuController {
         @Body() dto: UpdateMenuItemDto,
     ) {
         return this.menuService.updateMenuItem(user.cafeId, id, dto);
+    }
+
+    // Waiters/cashiers can mark an item sold out ("86") from the floor without
+    // needing admin -- it's the most common mid-service menu change.
+    @UseGuards(JwtAuthGuard)
+    @Patch(':id/availability')
+    setAvailability(
+        @CurrentUser() user: CurrentUserPayload,
+        @Param('id', ParseIntPipe) id: number,
+        @Body() body: { isAvailable: boolean },
+    ) {
+        return this.menuService.updateMenuItem(user.cafeId, id, { isAvailable: !!body?.isAvailable });
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('admin')
+    @Delete(':id')
+    deleteMenuItem(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
+        return this.menuService.deleteMenuItem(user.cafeId, id);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard, PlanFeatureGuard)
+    @Roles('admin')
+    @RequiresFeature('inventory')
+    @Get(':id/recipe')
+    getRecipe(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
+        return this.menuService.getRecipe(user.cafeId, id);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard, PlanFeatureGuard)
+    @Roles('admin')
+    @RequiresFeature('inventory')
+    @Patch(':id/recipe')
+    setRecipe(
+        @CurrentUser() user: CurrentUserPayload,
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: SetRecipeDto,
+    ) {
+        return this.menuService.setRecipe(user.cafeId, id, dto);
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)

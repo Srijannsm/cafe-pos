@@ -17,10 +17,16 @@ export type OrderItemReadyEvent = {
 };
 
 // Broadcasts order-lifecycle events to every connected client *of the same
-// cafe* (Kitchen Display, waiter order screens) via a per-cafe Socket.IO
-// room. This used to be a plain server.emit() with no rooms -- fine for a
-// single cafe, but once a second tenant is on this deployment that would
-// leak one cafe's kitchen/order events to every other cafe's screens.
+// cafe* (Kitchen Display, waiter order screens, floor view, billing) via a
+// per-cafe Socket.IO room, so one tenant never sees another's events.
+//
+// Event catalogue:
+//   order.sentToKitchen  -- KDS gets a new/updated ticket
+//   order.itemReady      -- waiter screen shows "ready to serve"
+//   order.itemVoided     -- KDS strikes the item through
+//   floor.changed        -- tables/billing refetch (replaces 15s polling)
+//   qr.orderPlaced       -- a customer submitted from the table QR
+//   table.request        -- "Call waiter" / "Request bill" tapped
 @WebSocketGateway({
   cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
 })
@@ -32,12 +38,9 @@ export class OrdersGateway implements OnGatewayConnection {
 
   constructor(private jwtService: JwtService) {}
 
-  // Same JWT_SECRET as the REST API (JwtService is configured once, in
-  // AuthModule, and reused here) -- an unauthenticated or stale token gets
-  // disconnected immediately rather than left listening. The verified
-  // token's cafeId also decides which room this socket joins, so a client
-  // can never end up listening to another cafe's events.
   handleConnection(client: Socket) {
+    // The games namespace authenticates on its own (qrToken, not a staff JWT).
+    if (client.nsp.name !== '/') return;
     const token = client.handshake.auth?.token as string | undefined;
 
     if (!token) {
@@ -57,10 +60,19 @@ export class OrdersGateway implements OnGatewayConnection {
 
   emitOrderSentToKitchen(cafeId: number, payload: OrderSentToKitchenEvent) {
     this.server.to(cafeRoom(cafeId)).emit('order.sentToKitchen', payload);
+    this.emitFloorChanged(cafeId);
   }
 
   emitOrderItemReady(cafeId: number, payload: OrderItemReadyEvent) {
     this.server.to(cafeRoom(cafeId)).emit('order.itemReady', payload);
+  }
+
+  emitCafe(cafeId: number, event: string, payload: unknown) {
+    this.server?.to(cafeRoom(cafeId)).emit(event, payload);
+  }
+
+  emitFloorChanged(cafeId: number) {
+    this.server?.to(cafeRoom(cafeId)).emit('floor.changed', { at: Date.now() });
   }
 }
 

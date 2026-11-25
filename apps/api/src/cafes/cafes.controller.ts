@@ -21,8 +21,8 @@ export class CafesController {
     return this.cafesService.getPlanInfo(user.cafeId);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
+  // Every staff screen needs the cafe's name/logo/colour, not just admin.
+  @UseGuards(JwtAuthGuard)
   @Get('settings')
   getSettings(@CurrentUser() user: CurrentUserPayload) {
     return this.cafesService.getSettings(user.cafeId);

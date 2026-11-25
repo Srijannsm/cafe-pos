@@ -15,6 +15,8 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Button } from "../components/ui/Button";
 import { FilterPills } from "../components/ui/FilterPills";
 import { InlineAlert } from "../components/ui/InlineAlert";
+import { useCafeSocket, chime } from "../lib/useCafeSocket";
+import { IconHand, IconReceipt as IconBill } from "../components/icons";
 
 type MergedFromTable = { id: number; tableNumber: string };
 
@@ -27,6 +29,12 @@ type Table = {
   activeOrderStatus: string | null;
   mergedIntoId: number | null;
   mergedFrom: MergedFromTable[];
+  runningTotal: string;
+  orderStartedAt: string | null;
+  unsentCount: number;
+  readyCount: number;
+  isQrOrder: boolean;
+  requests: { id: number; type: "call_waiter" | "request_bill"; createdAt: string }[];
 };
 
 const FILTERS = ["All", "Free", "Occupied", "Reserved"] as const;
@@ -75,12 +83,34 @@ export default function Home() {
     setIsAdmin(getCurrentUser()?.role === "admin");
   }, []);
 
+  // Socket events make the floor instant; the slow poll is just a safety net
+  // if Wi-Fi blips (it used to poll every 5s, which hammered the API).
+  const { connected } = useCafeSocket(ready, {
+    "floor.changed": () => loadTables(),
+    "table.request": (p: { tableNumber: string; type: string }) => {
+      chime(3);
+      setMessage(`Table ${p.tableNumber} ${p.type === "request_bill" ? "asked for the bill" : "is calling a waiter"}`);
+      loadTables();
+    },
+    "qr.orderPlaced": (p: { tableNumber: string }) => {
+      chime(2);
+      setMessage(`New QR order from Table ${p.tableNumber} — confirm it to send to the kitchen`);
+      loadTables();
+    },
+  });
+
   useEffect(() => {
     if (!ready) return;
     loadTables().finally(() => setLoading(false));
-    const interval = setInterval(loadTables, 5000);
+    const interval = setInterval(loadTables, connected ? 30000 : 8000);
     return () => clearInterval(interval);
-  }, [ready, loadTables]);
+  }, [ready, loadTables, connected]);
+
+  async function resolveRequest(id: number) {
+    setTables((ts) => ts.map((t) => ({ ...t, requests: t.requests.filter((r) => r.id !== id) })));
+    await apiFetchJson(`/tables/requests/${id}/resolve`, { method: "PATCH" }).catch(() => {});
+    loadTables();
+  }
 
   function cancelMode() {
     setFloorMode("normal");
@@ -210,10 +240,6 @@ export default function Home() {
     if (!user) { router.push("/login"); return; }
 
     if (table.status === "free") {
-      if (user.role !== "waiter" && user.role !== "admin") {
-        setMessage("Only waiters can start a new order.");
-        return;
-      }
       setMessage("");
       try {
         const order = await apiFetchJson<{ id: number }>("/orders", {
@@ -274,7 +300,10 @@ export default function Home() {
       <NavBar />
       <div className="p-4 sm:p-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="display-md text-ink-primary">Tables</h1>
+          <div>
+            <h1 className="text-2xl font-semibold text-ink-primary">Tables</h1>
+            <p className="text-sm text-ink-secondary">{occupiedCount} open · {freeCount} free{!connected && " · reconnecting…"}</p>
+          </div>
 
           {isNormal && (
             <div className="flex flex-wrap gap-2">
@@ -282,7 +311,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setFloorMode("physical")}
-                  className="flex items-center gap-2 rounded-xl border border-border-strong bg-surface-raised px-4 py-2 label-md font-semibold text-ink-secondary transition hover:bg-surface-sunken"
+                  className="flex items-center gap-2 rounded-lg border border-border-strong bg-surface-raised px-3.5 py-2 text-sm font-medium text-ink-secondary transition hover:bg-surface-sunken"
                 >
                   <IconGitMerge className="h-4 w-4" />
                   Merge tables
@@ -292,7 +321,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setFloorMode("transfer")}
-                  className="flex items-center gap-2 rounded-xl border border-border-strong bg-surface-raised px-4 py-2 label-md font-semibold text-ink-secondary transition hover:bg-surface-sunken"
+                  className="flex items-center gap-2 rounded-lg border border-border-strong bg-surface-raised px-3.5 py-2 text-sm font-medium text-ink-secondary transition hover:bg-surface-sunken"
                 >
                   <IconGitMerge className="h-4 w-4" />
                   Transfer order
@@ -305,7 +334,7 @@ export default function Home() {
             <button
               type="button"
               onClick={cancelMode}
-              className="flex items-center gap-2 rounded-xl border border-border-subtle px-4 py-2 label-md font-semibold text-ink-faint transition hover:text-ink-secondary"
+              className="flex items-center gap-2 rounded-lg border border-border-subtle px-3.5 py-2 text-sm font-medium text-ink-faint transition hover:text-ink-secondary"
             >
               <IconX className="h-4 w-4" />
               Cancel
@@ -357,13 +386,31 @@ export default function Home() {
         )}
 
         {message && (
-          <InlineAlert className="mb-4" onDismiss={() => setMessage("")}>
+          <InlineAlert className="mb-4" tone="info" onDismiss={() => setMessage("")}>
             {message}
           </InlineAlert>
         )}
 
+        {/* Open customer requests -- one tap to acknowledge */}
+        {isNormal && tables.some((t) => t.requests.length > 0) && (
+          <div className="mb-5 flex flex-wrap gap-2">
+            {tables.flatMap((t) => t.requests.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => resolveRequest(r.id)}
+                className="flex items-center gap-2 rounded-full bg-status-danger px-4 py-2 text-sm font-semibold text-white shadow-sm transition active:scale-95"
+              >
+                {r.type === "call_waiter" ? <IconHand className="h-4 w-4" /> : <IconBill className="h-4 w-4" />}
+                Table {t.tableNumber} {r.type === "call_waiter" ? "is calling" : "wants the bill"}
+                <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">Done</span>
+              </button>
+            )))}
+          </div>
+        )}
+
         {!ready || loading ? (
-          <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
             {Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} variant="rect" className="h-40 w-full rounded-xl" />
             ))}
@@ -400,7 +447,7 @@ export default function Home() {
             }
           />
         ) : (
-          <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
             {filteredTables.map((table) => {
               const isThisPrimary = primaryTable?.id === table.id;
               const isThisSecondary = selectedSecondaries.some((t) => t.id === table.id);
@@ -433,6 +480,12 @@ export default function Home() {
                   seats={table.capacity}
                   status={table.status}
                   activeOrderStatus={table.activeOrderStatus}
+                  total={Number(table.runningTotal ?? 0)}
+                  startedAt={table.orderStartedAt}
+                  unsentCount={table.unsentCount}
+                  readyCount={table.readyCount}
+                  isQrOrder={table.isQrOrder}
+                  requests={table.requests}
                   onClick={() => handleTableClick(table)}
                   isPhysicalPrimary={isThisPrimary}
                   isPhysicalSelected={isThisSecondary}
@@ -456,7 +509,7 @@ export default function Home() {
 
       {/* Physical merge confirmation bar */}
       {isPhysical && primaryTable && selectedSecondaries.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-strong bg-surface-base px-4 py-4 shadow-xl">
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-strong bg-surface-raised px-4 py-4 shadow-xl">
           <div className="mx-auto flex max-w-lg flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="body-md font-semibold text-ink-primary">
@@ -477,7 +530,7 @@ export default function Home() {
 
       {/* Physical merge — primary chosen, waiting for secondary */}
       {isPhysical && primaryTable && selectedSecondaries.length === 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-subtle bg-surface-base px-4 py-3 shadow-lg">
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-subtle bg-surface-raised px-4 py-3 shadow-lg">
           <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
             <p className="body-sm text-ink-secondary">
               Table {primaryTable.tableNumber} is primary — tap additional free tables to absorb.
@@ -495,7 +548,7 @@ export default function Home() {
 
       {/* Transfer confirmation bar */}
       {isTransfer && transferSource && transferTarget && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-strong bg-surface-base px-4 py-4 shadow-xl">
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-strong bg-surface-raised px-4 py-4 shadow-xl">
           <div className="mx-auto flex max-w-lg flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="body-md font-semibold text-ink-primary">
@@ -515,7 +568,7 @@ export default function Home() {
 
       {/* Transfer — source chosen, waiting for target */}
       {isTransfer && transferSource && !transferTarget && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-subtle bg-surface-base px-4 py-3 shadow-lg">
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border-subtle bg-surface-raised px-4 py-3 shadow-lg">
           <div className="mx-auto flex max-w-lg items-center justify-between gap-3">
             <p className="body-sm text-ink-secondary">
               Table {transferSource.tableNumber} selected as source. Tap the target table.

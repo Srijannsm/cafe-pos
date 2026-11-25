@@ -8,5 +8,6 @@ import { PublicOrderingService } from './public-ordering.service.js';
   imports: [PrismaModule, OrdersModule],
   controllers: [PublicOrderingController],
   providers: [PublicOrderingService],
+  exports: [PublicOrderingService],
 })
 export class PublicOrderingModule {}

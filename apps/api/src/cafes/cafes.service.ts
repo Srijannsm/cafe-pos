@@ -1,11 +1,19 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { PLAN_LIMITS } from '../subscription/plan-limits.js';
+import { TRIAL_DAYS, allPlans, cyclePrice, effectivePlan, getPlan, serializePlan, type PlanKey } from '../subscription/plan-limits.js';
 import { UpdateCafeSettingsDto } from './dto/update-cafe-settings.dto.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
-type PlanKey = keyof typeof PLAN_LIMITS;
+
+const SETTINGS_SELECT = {
+  name: true, slug: true, logoUrl: true, themeColor: true,
+  coverImageUrl: true, tagline: true, fontStyle: true, menuLayout: true,
+  phone: true, address: true, wifiName: true, wifiPassword: true,
+  instagram: true, facebook: true, tiktok: true, receiptFooter: true,
+  vatEnabled: true, vatRate: true, panNumber: true, pricesIncludeVat: true, serviceChargeRate: true,
+  inventoryEnabled: true, gamesEnabled: true,
+} as const;
 
 @Injectable()
 export class CafesService {
@@ -21,7 +29,10 @@ export class CafesService {
 
   async findPublicBySlug(slug: string) {
     const cafe = await this.findBySlugOrThrow(slug);
-    return { id: cafe.id, name: cafe.name, slug: cafe.slug, logoUrl: cafe.logoUrl };
+    return {
+      id: cafe.id, name: cafe.name, slug: cafe.slug, logoUrl: cafe.logoUrl,
+      themeColor: cafe.themeColor, coverImageUrl: cafe.coverImageUrl, tagline: cafe.tagline, fontStyle: cafe.fontStyle,
+    };
   }
 
   async findStaffForLogin(slug: string) {
@@ -32,33 +43,24 @@ export class CafesService {
     });
   }
 
-  /** Returns full cafe settings for the admin settings page */
+  /** Returns full cafe settings (branding, billing, features). */
   async getSettings(cafeId: number) {
-    const cafe = await this.prisma.cafe.findUniqueOrThrow({
+    return this.prisma.cafe.findUniqueOrThrow({
       where: { id: cafeId },
-      select: {
-        name: true,
-        slug: true,
-        logoUrl: true,
-        themeColor: true,
-        vatEnabled: true,
-        vatRate: true,
-        panNumber: true,
-      },
+      select: SETTINGS_SELECT,
     });
-    return cafe;
   }
 
-  /** Update name and/or themeColor */
+  /** Partial update -- only the fields sent are changed. */
   async updateSettings(cafeId: number, dto: UpdateCafeSettingsDto) {
-    return this.prisma.cafe.update({
-      where: { id: cafeId },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.themeColor !== undefined && { themeColor: dto.themeColor }),
-      },
-      select: { name: true, slug: true, logoUrl: true, themeColor: true },
-    });
+    const data: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(dto)) {
+      if (value === undefined) continue;
+      // Empty strings clear optional text fields rather than storing "".
+      data[key] = typeof value === 'string' ? value.trim() || null : value;
+    }
+    if (data.name === null) delete data.name;
+    return this.prisma.cafe.update({ where: { id: cafeId }, data, select: SETTINGS_SELECT });
   }
 
   /** Save uploaded logo file and store its public URL */
@@ -92,17 +94,13 @@ export class CafesService {
     return { logoUrl: null };
   }
 
-  /** Returns the cafe's plan info and feature flags for frontend gating. */
+  /** The cafe's plan, what it includes, usage against limits, and the other plans (for the upgrade table). */
   async getPlanInfo(cafeId: number) {
     const cafe = await this.prisma.cafe.findUniqueOrThrow({
       where: { id: cafeId },
-      select: { plan: true, subscriptionStatus: true, nextBillingAt: true },
+      select: { plan: true, subscriptionStatus: true, nextBillingAt: true, billingCycle: true, trialStartedAt: true },
     });
-
-    const planKey: PlanKey =
-      cafe.subscriptionStatus === 'trial' ? 'trial' : ((cafe.plan ?? 'starter') as PlanKey);
-
-    const limits = PLAN_LIMITS[planKey];
+    const limits = serializePlan(effectivePlan(cafe));
 
     const [staffCount, menuItemCount, tableCount] = await Promise.all([
       this.prisma.user.count({ where: { cafeId } }),
@@ -112,17 +110,24 @@ export class CafesService {
 
     return {
       plan: cafe.plan,
+      planName: getPlan(cafe.plan as PlanKey).name,
+      billingCycle: cafe.billingCycle,
+      price: cyclePrice(cafe.plan as PlanKey, cafe.billingCycle),
       subscriptionStatus: cafe.subscriptionStatus,
       nextBillingAt: cafe.nextBillingAt,
+      trialEndsAt: new Date(cafe.trialStartedAt.getTime() + TRIAL_DAYS * 86400000),
       isOverdue: cafe.subscriptionStatus === 'overdue',
       features: {
         qrOrdering: limits.qrOrdering,
         reports: limits.reports,
-        maxStaff: limits.maxStaff === Infinity ? null : limits.maxStaff,
-        maxMenuItems: limits.maxMenuItems === Infinity ? null : limits.maxMenuItems,
-        maxTables: limits.maxTables === Infinity ? null : limits.maxTables,
+        inventory: limits.inventory,
+        tableGame: limits.tableGame,
+        maxStaff: limits.maxStaff,
+        maxMenuItems: limits.maxMenuItems,
+        maxTables: limits.maxTables,
       },
       usage: { staffCount, menuItemCount, tableCount },
+      plans: allPlans().map(serializePlan),
     };
   }
 }

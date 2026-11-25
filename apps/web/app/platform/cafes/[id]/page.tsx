@@ -1,514 +1,360 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { platformFetchJson, getPlatformToken } from "../../../../lib/api";
+import { useParams } from "next/navigation";
+import { platformFetchJson } from "../../../../lib/api";
 import { useToast } from "../../../../components/Toast";
-import { IconChevronRight, IconUsers, IconClipboardList, IconReceipt, IconBanknote } from "../../../../components/icons";
-import { SectionCard } from "../../../admin/_components/SectionCard";
-import { ErrorState } from "../../../../components/ui/ErrorState";
-import { Skeleton } from "../../../../components/ui/Skeleton";
-import { StatCard } from "../../../../components/ui/StatCard";
 import { Button } from "../../../../components/ui/Button";
-import { InlineAlert } from "../../../../components/ui/InlineAlert";
+import { Modal } from "../../../../components/ui/Modal";
+import { Switch } from "../../../../components/ui/Switch";
+import { Tabs } from "../../../../components/ui/Tabs";
+import { ConfirmDialog } from "../../../../components/ui/ConfirmDialog";
+import { Field, Panel, Pill, SectionTitle, inputClass } from "../../../../components/ui/Field";
+import { StatCard } from "../../../../components/ui/StatCard";
+import { Skeleton } from "../../../../components/ui/Skeleton";
+import { ErrorState } from "../../../../components/ui/ErrorState";
+import { BarChart } from "../../../../components/admin/charts";
+import { IconChevronLeft, IconExternal, IconCheck, IconBanknote, IconReceipt, IconQrCode, IconClock, IconKey } from "../../../../components/icons";
+import { CafeAvatar, PLAN_KEYS, StatusPill, loginUrl, usePlans, type Plan, type SubStatus } from "../../../../components/platform/shared";
+import { ago, dateTime, localDay, rs, shortDate } from "../../../../lib/format";
 
-type SubscriptionPlan = "starter" | "standard" | "premium";
-type SubscriptionStatus = "trial" | "active" | "overdue" | "cancelled";
-
-type CafeDetail = {
-  id: number;
-  name: string;
-  slug: string;
-  isActive: boolean;
-  vatEnabled: boolean;
-  vatRate: string;
-  panNumber: string | null;
-  logoUrl: string | null;
-  plan: SubscriptionPlan;
-  billingCycle: string;
-  subscriptionStatus: SubscriptionStatus;
-  trialStartedAt: string;
-  nextBillingAt: string | null;
-  setupFeePaid: boolean;
-  subscriptionNotes: string | null;
-  createdAt: string;
+type Detail = {
+  id: number; name: string; slug: string; isActive: boolean; logoUrl: string | null; themeColor: string | null;
+  vatEnabled: boolean; vatRate: string; panNumber: string | null; phone: string | null; address: string | null;
+  plan: Plan; billingCycle: string; subscriptionStatus: SubStatus; trialStartedAt: string; trialEndsAt: string; trialDaysLeft: number | null;
+  nextBillingAt: string | null; setupFeePaid: boolean; subscriptionNotes: string | null; createdAt: string;
+  inventoryEnabled: boolean; gamesEnabled: boolean;
+  orders30: number; gmv30: string; lastOrderAt: string | null; mrr: number; atRisk: boolean; qrOrders30: number;
+  _count: { users: number; orders: number; tables: number; menuItems: number };
   users: { id: number; name: string; role: string; isActive: boolean }[];
-  _count: { menuItems: number; tables: number; orders: number };
-  recentOrders: {
-    id: number;
-    orderType: string;
-    status: string;
-    total: string | null;
-    createdAt: string;
-    table: { tableNumber: string } | null;
-  }[];
+  recentOrders: { id: number; status: string; total: string | null; createdAt: string; source: string; table: { tableNumber: string } | null }[];
+  series: { period: string; sales: string; bills: number }[];
 };
-
-const PLAN_LABELS: Record<SubscriptionPlan, string> = {
-  starter: "Starter — Rs. 999/mo",
-  standard: "Standard — Rs. 1,999/mo",
-  premium: "Premium — Rs. 3,499/mo",
-};
-
-const STATUS_STYLES: Record<SubscriptionStatus, string> = {
-  trial: "bg-blue-50 text-blue-700",
-  active: "bg-status-success-tint text-status-success-ink",
-  overdue: "bg-yellow-50 text-yellow-700",
-  cancelled: "bg-surface-sunken text-ink-faint",
-};
-
-function roleLabel(role: string) {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
-function formatDate(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-NP", { year: "numeric", month: "short", day: "numeric" });
-}
+type Tab = "overview" | "subscription" | "staff" | "settings";
+const json = { "Content-Type": "application/json" };
 
 export default function CafeDetailPage() {
-  const router = useRouter();
-  const params = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
   const { showToast, toastHost } = useToast();
+  const [c, setC] = useState<Detail | null>(null);
+  const [err, setErr] = useState(false);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [payOpen, setPayOpen] = useState(false);
+  const [pinFor, setPinFor] = useState<Detail["users"][number] | null>(null);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const pl = usePlans();
 
-  const [cafe, setCafe] = useState<CafeDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const load = useCallback(() => platformFetchJson<Detail>(`/platform/cafes/${id}`).then(setC).catch(() => setErr(true)), [id]);
+  useEffect(() => { load(); }, [load]);
 
-  // VAT edit state
-  const [editingVat, setEditingVat] = useState(false);
-  const [vatEnabled, setVatEnabled] = useState(false);
-  const [vatRate, setVatRate] = useState("13");
-  const [panNumber, setPanNumber] = useState("");
-  const [vatSaving, setVatSaving] = useState(false);
-  const [vatError, setVatError] = useState("");
-
-  // Subscription edit state
-  const [editingSub, setEditingSub] = useState(false);
-  const [subPlan, setSubPlan] = useState<SubscriptionPlan>("starter");
-  const [subCycle, setSubCycle] = useState("monthly");
-  const [subStatus, setSubStatus] = useState<SubscriptionStatus>("trial");
-  const [nextBilling, setNextBilling] = useState("");
-  const [setupFeePaid, setSetupFeePaid] = useState(false);
-  const [subNotes, setSubNotes] = useState("");
-  const [subSaving, setSubSaving] = useState(false);
-  const [subError, setSubError] = useState("");
-
-  useEffect(() => {
-    if (!getPlatformToken()) {
-      router.replace("/platform/login");
-      return;
-    }
-    platformFetchJson<CafeDetail>(`/platform/cafes/${params.id}`)
-      .then((data) => {
-        setCafe(data);
-        // VAT
-        setVatEnabled(data.vatEnabled);
-        setVatRate(String(Number(data.vatRate)));
-        setPanNumber(data.panNumber ?? "");
-        // Subscription
-        setSubPlan(data.plan);
-        setSubCycle(data.billingCycle);
-        setSubStatus(data.subscriptionStatus);
-        setNextBilling(data.nextBillingAt ? data.nextBillingAt.slice(0, 10) : "");
-        setSetupFeePaid(data.setupFeePaid);
-        setSubNotes(data.subscriptionNotes ?? "");
-      })
-      .catch(() => showToast("Could not load that cafe", "error"))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id]);
-
-  async function handleToggleActive() {
-    if (!cafe) return;
+  async function patch(body: Record<string, unknown>, ok = "Saved") {
     try {
-      const updated = await platformFetchJson<CafeDetail>(`/platform/cafes/${cafe.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !cafe.isActive }),
-      });
-      setCafe({ ...cafe, isActive: updated.isActive });
-      showToast(cafe.isActive ? `"${cafe.name}" deactivated` : `"${cafe.name}" reactivated`);
-    } catch {
-      showToast("Could not update that cafe", "error");
+      await platformFetchJson(`/platform/cafes/${id}`, { method: "PATCH", headers: json, body: JSON.stringify(body) });
+      showToast(ok);
+      load();
+    } catch (e) {
+      showToast((e as Error).message, "error");
     }
   }
 
-  async function handleSaveVat() {
-    if (!cafe) return;
-    setVatError("");
-    setVatSaving(true);
-    try {
-      const updated = await platformFetchJson<CafeDetail>(`/platform/cafes/${cafe.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vatEnabled,
-          vatRate: vatEnabled ? Number(vatRate) : undefined,
-          panNumber: vatEnabled ? (panNumber.trim() || null) : null,
-        }),
-      });
-      setCafe((prev) => prev ? { ...prev, vatEnabled: updated.vatEnabled, vatRate: updated.vatRate, panNumber: updated.panNumber } : prev);
-      setEditingVat(false);
-      showToast("VAT settings saved");
-    } catch (err) {
-      setVatError(err instanceof Error ? err.message : "Could not save VAT settings.");
-    } finally {
-      setVatSaving(false);
-    }
-  }
+  if (err) return <ErrorState title="Couldn't load this cafe" onRetry={load} />;
+  if (!c) return <div className="space-y-4"><Skeleton className="h-16 w-80 rounded-xl" /><Skeleton className="h-80 rounded-2xl" /></div>;
 
-  function cancelVatEdit() {
-    if (!cafe) return;
-    setVatEnabled(cafe.vatEnabled);
-    setVatRate(String(Number(cafe.vatRate)));
-    setPanNumber(cafe.panNumber ?? "");
-    setVatError("");
-    setEditingVat(false);
-  }
+  const checklist = [
+    { done: c._count.menuItems > 0, label: "Menu added", detail: `${c._count.menuItems} items` },
+    { done: c._count.tables > 0, label: "Tables set up", detail: `${c._count.tables} tables` },
+    { done: c.users.filter((u) => u.isActive).length > 1, label: "Staff invited", detail: `${c.users.length} accounts` },
+    { done: c._count.orders > 0, label: "First order taken", detail: c.lastOrderAt ? `last ${ago(c.lastOrderAt)}` : "not yet" },
+    { done: c.qrOrders30 > 0, label: "Customers using QR", detail: `${c.qrOrders30} QR orders · 30d` },
+  ];
 
-  async function handleSaveSub() {
-    if (!cafe) return;
-    setSubError("");
-    setSubSaving(true);
-    try {
-      await platformFetchJson(`/platform/cafes/${cafe.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plan: subPlan,
-          billingCycle: subCycle,
-          subscriptionStatus: subStatus,
-          nextBillingAt: nextBilling || null,
-          setupFeePaid,
-          subscriptionNotes: subNotes.trim() || null,
-        }),
-      });
-      setCafe((prev) => prev ? {
-        ...prev,
-        plan: subPlan,
-        billingCycle: subCycle,
-        subscriptionStatus: subStatus,
-        nextBillingAt: nextBilling || null,
-        setupFeePaid,
-        subscriptionNotes: subNotes.trim() || null,
-      } : prev);
-      setEditingSub(false);
-      showToast("Subscription updated");
-    } catch (err) {
-      setSubError(err instanceof Error ? err.message : "Could not save subscription.");
-    } finally {
-      setSubSaving(false);
-    }
-  }
+  return (
+    <div>
+      {toastHost}
+      <Link href="/platform/cafes" className="mb-4 inline-flex items-center gap-1 text-sm text-ink-secondary hover:text-ink-primary"><IconChevronLeft className="h-4 w-4" />All cafes</Link>
 
-  function cancelSubEdit() {
-    if (!cafe) return;
-    setSubPlan(cafe.plan);
-    setSubCycle(cafe.billingCycle);
-    setSubStatus(cafe.subscriptionStatus);
-    setNextBilling(cafe.nextBillingAt ? cafe.nextBillingAt.slice(0, 10) : "");
-    setSetupFeePaid(cafe.setupFeePaid);
-    setSubNotes(cafe.subscriptionNotes ?? "");
-    setSubError("");
-    setEditingSub(false);
-  }
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-canvas">
-        <Skeleton className="h-8 w-40" />
-      </div>
-    );
-  }
-
-  if (!cafe) {
-    return (
-      <div className="mx-auto max-w-3xl p-6 sm:p-10">
-        {toastHost}
-        <ErrorState
-          title="Cafe not found"
-          description="That cafe couldn't be loaded. It may have been removed."
-        />
-        <div className="mt-4 text-center">
-          <Link href="/platform" className="body-md font-medium text-brand-strong hover:underline">
-            Back to platform admin
-          </Link>
+      <div className="mb-6 flex flex-wrap items-center gap-4">
+        <CafeAvatar name={c.name} logoUrl={c.logoUrl} color={c.themeColor} size={56} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold">{c.name}</h1>
+            <StatusPill status={c.subscriptionStatus} isActive={c.isActive} trialDaysLeft={c.trialDaysLeft} />
+            {c.atRisk && <Pill tone="warning">Gone quiet</Pill>}
+          </div>
+          <p className="text-sm text-ink-secondary">
+            {pl.name(c.plan)} · {c.billingCycle} · joined {shortDate(c.createdAt)}{c.address ? ` · ${c.address}` : ""}{c.phone ? ` · ${c.phone}` : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="small" onClick={() => { navigator.clipboard?.writeText(loginUrl(c.slug)); showToast("Login link copied"); }}>Copy login link</Button>
+          <a href={loginUrl(c.slug)} target="_blank" rel="noreferrer"><Button variant="secondary" size="small" icon={<IconExternal />}>Open</Button></a>
+          <Button size="small" icon={<IconBanknote />} onClick={() => setPayOpen(true)}>Record payment</Button>
         </div>
       </div>
-    );
+
+      <Tabs className="mb-6" value={tab} onChange={setTab} tabs={[
+        { value: "overview", label: "Overview" }, { value: "subscription", label: "Subscription" },
+        { value: "staff", label: "Staff", count: c.users.length }, { value: "settings", label: "Settings" },
+      ]} />
+
+      {tab === "overview" && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            <StatCard icon={<IconReceipt />} label="Paid orders · 30 days" value={c.orders30} caption={`${c._count.orders.toLocaleString("en-IN")} all-time`} />
+            <StatCard icon={<IconBanknote />} label="Through their till · 30 days" value={rs(c.gmv30)} caption={c.orders30 ? `avg ${rs(Number(c.gmv30) / c.orders30)}` : undefined} />
+            <StatCard icon={<IconQrCode />} label="QR self-orders · 30 days" value={c.qrOrders30} />
+            <StatCard icon={<IconClock />} label="Last order" value={c.lastOrderAt ? ago(c.lastOrderAt) : "Never"} captionTone={c.atRisk ? "warning" : undefined} caption={c.atRisk ? "Worth a call" : undefined} />
+          </div>
+          <div className="grid gap-6 xl:grid-cols-3">
+            <Panel className="xl:col-span-2">
+              <SectionTitle title="Sales, last 30 days" description="What went through their POS — not what they pay us." />
+              <BarChart height={180} data={c.series.map((s) => ({ label: s.period, value: Number(s.sales), sub: `${s.bills} bills` }))} />
+            </Panel>
+            <Panel>
+              <SectionTitle title="Setup checklist" description="Help them finish onboarding." />
+              <ul className="space-y-3">
+                {checklist.map((s) => (
+                  <li key={s.label} className="flex items-center gap-3 text-sm">
+                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${s.done ? "bg-status-success text-white" : "border-2 border-border-strong"}`}>{s.done && <IconCheck className="h-3.5 w-3.5" />}</span>
+                    <span className={`flex-1 ${s.done ? "text-ink-primary" : "text-ink-secondary"}`}>{s.label}</span>
+                    <span className="text-xs text-ink-faint">{s.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          </div>
+          <Panel padded={false}>
+            <div className="px-6 pb-3 pt-5"><h3 className="text-base font-semibold">Recent orders</h3></div>
+            {c.recentOrders.length === 0 ? <p className="px-6 pb-6 text-sm text-ink-faint">No orders yet.</p> : (
+              <table className="w-full text-sm">
+                <tbody>
+                  {c.recentOrders.map((o) => (
+                    <tr key={o.id} className="border-t border-border-subtle">
+                      <td className="px-6 py-3 font-medium">#{o.id}</td>
+                      <td className="px-3 py-3 text-ink-secondary">Table {o.table?.tableNumber ?? "—"}{o.source === "qr" ? " · QR" : ""}</td>
+                      <td className="px-3 py-3"><Pill tone={o.status === "paid" ? "success" : o.status === "cancelled" ? "danger" : "info"}>{o.status}</Pill></td>
+                      <td className="tabular px-3 py-3 text-right">{o.total ? rs(o.total) : "—"}</td>
+                      <td className="px-6 py-3 text-right text-ink-faint">{dateTime(o.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        </div>
+      )}
+
+      {tab === "subscription" && <SubscriptionTab c={c} patch={patch} onPay={() => setPayOpen(true)} reload={load} toast={showToast} />}
+
+      {tab === "staff" && (
+        <Panel padded={false} className="max-w-3xl">
+          <ul className="divide-y divide-border-subtle">
+            {c.users.map((u) => (
+              <li key={u.id} className="flex items-center gap-3 px-6 py-4">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-sunken text-sm font-semibold">{u.name.charAt(0)}</span>
+                <div className="flex-1">
+                  <p className="font-medium">{u.name}</p>
+                  <p className="text-xs capitalize text-ink-faint">{u.role}{u.isActive ? "" : " · deactivated"}</p>
+                </div>
+                <Button size="small" variant="secondary" icon={<IconKey />} onClick={() => setPinFor(u)}>Reset PIN</Button>
+              </li>
+            ))}
+          </ul>
+          <p className="border-t border-border-subtle px-6 py-3 text-xs text-ink-faint">Day-to-day staff changes are done by the cafe in Admin → Staff. Reset a PIN here when the owner is locked out.</p>
+        </Panel>
+      )}
+
+      {tab === "settings" && (
+        <div className="max-w-3xl space-y-6">
+          <SettingsPanel c={c} patch={patch} />
+          <Panel>
+            <SectionTitle title={c.isActive ? "Deactivate cafe" : "Reactivate cafe"} description={c.isActive ? "Staff can't log in and the QR menu stops working. Data is kept." : "Staff can log in again."} />
+            {c.isActive
+              ? <Button variant="danger" onClick={() => setConfirmOff(true)}>Deactivate</Button>
+              : <Button onClick={() => patch({ isActive: true }, "Cafe reactivated")}>Reactivate</Button>}
+          </Panel>
+        </div>
+      )}
+
+      <PaymentModal open={payOpen} c={c} onClose={() => setPayOpen(false)} onDone={() => { setPayOpen(false); showToast("Payment recorded — subscription extended"); load(); }} onError={(m) => showToast(m, "error")} />
+      <PinModal user={pinFor} cafeId={c.id} onClose={() => setPinFor(null)} onDone={(m) => { setPinFor(null); showToast(m); load(); }} onError={(m) => showToast(m, "error")} />
+      <ConfirmDialog open={confirmOff} title={`Deactivate ${c.name}?`} description="Their staff will be signed out of new sessions and the QR menu will show an error. You can reactivate any time." confirmLabel="Deactivate" onCancel={() => setConfirmOff(false)} onConfirm={() => { setConfirmOff(false); patch({ isActive: false }, "Cafe deactivated"); }} />
+    </div>
+  );
+}
+
+function SubscriptionTab({ c, patch, onPay, reload, toast }: { c: Detail; patch: (b: Record<string, unknown>, ok?: string) => void; onPay: () => void; reload: () => void; toast: (m: string, t?: "success" | "error") => void }) {
+  const [f, setF] = useState({ plan: c.plan, billingCycle: c.billingCycle, subscriptionStatus: c.subscriptionStatus, nextBillingAt: c.nextBillingAt?.slice(0, 10) ?? "", setupFeePaid: c.setupFeePaid });
+  const [note, setNote] = useState("");
+  const pl = usePlans();
+  const due = pl.cyclePrice(f.plan, f.billingCycle);
+
+  async function extend(days: number) {
+    try {
+      await platformFetchJson(`/platform/cafes/${c.id}/extend-trial`, { method: "POST", headers: json, body: JSON.stringify({ days }) });
+      toast(`Trial extended by ${days} days`);
+      reload();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 p-6 sm:p-10">
-      {toastHost}
-      <div>
-        <Link href="/platform" className="label-sm flex items-center gap-1 text-ink-secondary hover:text-ink-primary">
-          <IconChevronRight className="h-3 w-3 rotate-180" />
-          All cafes
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="display-md text-ink-primary">{cafe.name}</h1>
-            <p className="body-md mt-1 text-ink-secondary">/c/{cafe.slug}/login</p>
-          </div>
-          <button
-            type="button"
-            onClick={handleToggleActive}
-            className={`label-sm rounded-pill px-4 py-2 font-semibold transition ${
-              cafe.isActive
-                ? "bg-status-success-tint text-status-success-ink hover:brightness-95"
-                : "bg-surface-sunken text-ink-faint hover:brightness-95"
-            }`}
-          >
-            {cafe.isActive ? "Active" : "Inactive"}
-          </button>
+    <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
+      <Panel>
+        <SectionTitle title="Plan & billing" description="Collected manually (eSewa / Khalti / bank). Record each payment so the due date moves forward." />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Plan">
+            <select className={`${inputClass} w-full`} value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value as Plan })}>
+              {PLAN_KEYS.map((p) => <option key={p} value={p}>{pl.name(p)} — {rs(pl.monthly(p))}/mo</option>)}
+            </select>
+          </Field>
+          <Field label="Billing cycle">
+            <select className={`${inputClass} w-full`} value={f.billingCycle} onChange={(e) => setF({ ...f, billingCycle: e.target.value })}>
+              <option value="monthly">Monthly</option><option value="yearly">Yearly</option>
+            </select>
+          </Field>
+          <Field label="Status" hint={f.subscriptionStatus === "overdue" ? "Overdue = read-only: they can't start orders or add items." : undefined}>
+            <select className={`${inputClass} w-full`} value={f.subscriptionStatus} onChange={(e) => setF({ ...f, subscriptionStatus: e.target.value as SubStatus })}>
+              <option value="trial">Trial</option><option value="active">Active</option><option value="overdue">Overdue</option><option value="cancelled">Cancelled</option>
+            </select>
+          </Field>
+          <Field label="Next bill due">
+            <input type="date" className={`${inputClass} w-full`} value={f.nextBillingAt} onChange={(e) => setF({ ...f, nextBillingAt: e.target.value })} />
+          </Field>
         </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Menu items" value={cafe._count.menuItems} />
-        <StatCard label="Tables" value={cafe._count.tables} />
-        <StatCard label="Orders, all-time" value={cafe._count.orders} />
-      </div>
-
-      {/* Subscription */}
-      <SectionCard icon={<IconBanknote />} title="Subscription" description="Manually track the billing plan and status for this cafe.">
-        {editingSub ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="label-sm mb-1 block text-ink-secondary">Plan</label>
-                <select
-                  value={subPlan}
-                  onChange={(e) => setSubPlan(e.target.value as SubscriptionPlan)}
-                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                >
-                  <option value="starter">Starter — Rs. 999/mo</option>
-                  <option value="standard">Standard — Rs. 1,999/mo</option>
-                  <option value="premium">Premium — Rs. 3,499/mo</option>
-                </select>
-              </div>
-              <div>
-                <label className="label-sm mb-1 block text-ink-secondary">Billing cycle</label>
-                <select
-                  value={subCycle}
-                  onChange={(e) => setSubCycle(e.target.value)}
-                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
-              </div>
-              <div>
-                <label className="label-sm mb-1 block text-ink-secondary">Status</label>
-                <select
-                  value={subStatus}
-                  onChange={(e) => setSubStatus(e.target.value as SubscriptionStatus)}
-                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                >
-                  <option value="trial">Trial</option>
-                  <option value="active">Active</option>
-                  <option value="overdue">Overdue</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </div>
-              <div>
-                <label className="label-sm mb-1 block text-ink-secondary">Next billing date</label>
-                <input
-                  type="date"
-                  value={nextBilling}
-                  onChange={(e) => setNextBilling(e.target.value)}
-                  className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                />
-              </div>
-            </div>
-
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={setupFeePaid}
-                onChange={(e) => setSetupFeePaid(e.target.checked)}
-                className="h-4 w-4 rounded accent-brand"
-              />
-              <span className="body-md text-ink-primary">Setup fee paid</span>
-            </label>
-
-            <div>
-              <label className="label-sm mb-1 block text-ink-secondary">Notes (internal)</label>
-              <textarea
-                value={subNotes}
-                onChange={(e) => setSubNotes(e.target.value)}
-                rows={2}
-                placeholder="e.g. paid via eSewa, contact: 98XXXXXXXX"
-                className="body-md w-full rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-              />
-            </div>
-
-            {subError && <InlineAlert>{subError}</InlineAlert>}
-
-            <div className="flex items-center gap-2">
-              <Button onClick={handleSaveSub} loading={subSaving} size="small">Save</Button>
-              <Button onClick={cancelSubEdit} variant="ghost" size="small" disabled={subSaving}>Cancel</Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="body-md font-medium text-ink-primary">{PLAN_LABELS[cafe.plan]}</span>
-                <span className={`label-sm rounded-pill px-2.5 py-0.5 font-semibold capitalize ${STATUS_STYLES[cafe.subscriptionStatus]}`}>
-                  {cafe.subscriptionStatus}
-                </span>
-              </div>
-              <p className="body-sm text-ink-secondary">
-                {cafe.billingCycle === "yearly" ? "Yearly" : "Monthly"} billing
-                {cafe.nextBillingAt ? ` · Next: ${formatDate(cafe.nextBillingAt)}` : ""}
-                {" · "}Setup fee: {cafe.setupFeePaid ? "paid" : "not paid"}
-              </p>
-              <p className="body-sm text-ink-secondary">
-                Trial started: {formatDate(cafe.trialStartedAt)}
-              </p>
-              {cafe.subscriptionNotes && (
-                <p className="body-sm text-ink-faint italic">{cafe.subscriptionNotes}</p>
-              )}
-            </div>
-            <Button onClick={() => setEditingSub(true)} variant="secondary" size="small">Edit</Button>
-          </div>
-        )}
-      </SectionCard>
-
-      {/* VAT Settings */}
-      <SectionCard icon={<IconReceipt />} title="VAT / Tax settings" description="Enable VAT for this cafe to show tax breakdowns on bills and receipts.">
-        {editingVat ? (
-          <div className="space-y-4">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={vatEnabled}
-                onChange={(e) => setVatEnabled(e.target.checked)}
-                className="h-4 w-4 rounded accent-brand"
-              />
-              <span className="body-md text-ink-primary font-medium">VAT registered</span>
-            </label>
-
-            {vatEnabled && (
-              <>
-                <div>
-                  <label className="label-sm mb-1 block text-ink-secondary">VAT rate (%)</label>
-                  <input
-                    type="number"
-                    value={vatRate}
-                    onChange={(e) => setVatRate(e.target.value)}
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    className="body-md w-32 rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                  />
-                </div>
-                <div>
-                  <label className="label-sm mb-1 block text-ink-secondary">PAN number</label>
-                  <input
-                    type="text"
-                    value={panNumber}
-                    onChange={(e) => setPanNumber(e.target.value)}
-                    placeholder="e.g. 123456789"
-                    className="body-md w-full max-w-xs rounded-md border border-border-subtle bg-surface-raised px-3 py-2 text-ink-primary focus:outline-none focus:ring-2 focus:ring-brand"
-                  />
-                  <p className="body-sm mt-1 text-ink-faint">Printed on receipts for IRD compliance.</p>
-                </div>
-              </>
-            )}
-
-            {vatError && <InlineAlert>{vatError}</InlineAlert>}
-
-            <div className="flex items-center gap-2">
-              <Button onClick={handleSaveVat} loading={vatSaving} size="small">
-                Save
-              </Button>
-              <Button onClick={cancelVatEdit} variant="ghost" size="small" disabled={vatSaving}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <p className="body-md text-ink-primary">
-                {cafe.vatEnabled ? (
-                  <>
-                    <span className="font-medium">VAT enabled</span>
-                    {" · "}{Number(cafe.vatRate)}%
-                    {cafe.panNumber && <>{" · PAN: "}{cafe.panNumber}</>}
-                  </>
-                ) : (
-                  <span className="text-ink-faint">VAT not enabled for this cafe.</span>
-                )}
-              </p>
-            </div>
-            <Button onClick={() => setEditingVat(true)} variant="secondary" size="small">
-              Edit
-            </Button>
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard icon={<IconUsers />} title="Staff" description={`${cafe.users.length} account(s) at this cafe.`}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                <th className="py-3 pr-4">Name</th>
-                <th className="py-3 pr-4">Role</th>
-                <th className="py-3 pr-0">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cafe.users.map((u) => (
-                <tr key={u.id} className="border-b border-border-subtle last:border-0">
-                  <td className="py-3 pr-4 body-md font-medium text-ink-primary">{u.name}</td>
-                  <td className="py-3 pr-4 body-md text-ink-secondary">{roleLabel(u.role)}</td>
-                  <td className="py-3 pr-0 body-md text-ink-secondary">{u.isActive ? "Active" : "Inactive"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-4"><Switch checked={f.setupFeePaid} onChange={(v) => setF({ ...f, setupFeePaid: v })} label="Setup fee paid" description="One-time onboarding fee, if you charged one." /></div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
+          <p className="text-sm text-ink-secondary">Each {f.billingCycle === "yearly" ? "year" : "month"}: <span className="tabular font-semibold text-ink-primary">{rs(due)}</span></p>
+          <Button onClick={() => patch({ ...f, nextBillingAt: f.nextBillingAt || null }, "Subscription updated")}>Save</Button>
         </div>
-      </SectionCard>
+      </Panel>
 
-      <SectionCard icon={<IconClipboardList />} title="Recent orders" description="The last 10 orders placed at this cafe.">
-        {cafe.recentOrders.length === 0 ? (
-          <p className="body-md text-ink-faint">No orders yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                  <th className="py-3 pr-4">Order</th>
-                  <th className="py-3 pr-4">Type</th>
-                  <th className="py-3 pr-4">Status</th>
-                  <th className="py-3 pr-0 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cafe.recentOrders.map((order) => (
-                  <tr key={order.id} className="border-b border-border-subtle last:border-0">
-                    <td className="py-3 pr-4 body-md font-medium text-ink-primary">
-                      #{order.id}
-                      {order.table ? ` · Table ${order.table.tableNumber}` : ""}
-                    </td>
-                    <td className="py-3 pr-4 body-md text-ink-secondary">{order.orderType.replace("_", " ")}</td>
-                    <td className="py-3 pr-4 body-md text-ink-secondary">{order.status}</td>
-                    <td className="py-3 pr-0 text-right body-md text-ink-secondary">
-                      {order.total ?? "--"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <div className="space-y-6">
+        {c.subscriptionStatus === "trial" && (
+          <Panel>
+            <SectionTitle title="Trial" description={`Ends ${shortDate(c.trialEndsAt)}${c.trialDaysLeft != null ? ` (${c.trialDaysLeft > 0 ? `${c.trialDaysLeft} days left` : "ended"})` : ""}`} />
+            <div className="flex flex-wrap gap-2">
+              {[7, 14].map((d) => <Button key={d} size="small" variant="secondary" onClick={() => extend(d)}>+{d} days</Button>)}
+              <Button size="small" onClick={onPay}>Convert to paid</Button>
+            </div>
+          </Panel>
         )}
-      </SectionCard>
+        <Panel>
+          <SectionTitle title="Payment log" action={<Button size="small" variant="secondary" onClick={onPay}>+ Payment</Button>} />
+          {c.subscriptionNotes ? (
+            <ul className="space-y-2 text-sm">
+              {c.subscriptionNotes.split("\n").filter(Boolean).map((l, i) => <li key={i} className="rounded-lg bg-surface-canvas px-3 py-2 text-ink-secondary">{l}</li>)}
+            </ul>
+          ) : <p className="text-sm text-ink-faint">No payments recorded yet.</p>}
+          <div className="mt-4 flex gap-2">
+            <input className={`${inputClass} w-full`} placeholder="Add a note (call, promise to pay…)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <Button variant="secondary" disabled={!note.trim()} onClick={() => { patch({ subscriptionNotes: [`${localDay()} · ${note.trim()}`, c.subscriptionNotes].filter(Boolean).join("\n") }, "Note added"); setNote(""); }}>Add</Button>
+          </div>
+        </Panel>
+      </div>
     </div>
+  );
+}
+
+function SettingsPanel({ c, patch }: { c: Detail; patch: (b: Record<string, unknown>, ok?: string) => void }) {
+  const pl = usePlans();
+  const plan = pl.plans?.find((p) => p.key === (c.subscriptionStatus === "trial" ? "premium" : c.plan));
+  const notInPlan = (on: boolean | undefined) => (plan && !on ? <p className="mt-1.5 text-xs text-status-warning-ink">Not in the {plan.name} plan — stays off for this cafe until they upgrade (or you add it in Plans).</p> : null);
+  const [name, setName] = useState(c.name);
+  const [vat, setVat] = useState({ vatEnabled: c.vatEnabled, vatRate: String(Number(c.vatRate)), panNumber: c.panNumber ?? "" });
+  return (
+    <>
+      <Panel>
+        <SectionTitle title="Cafe" />
+        <div className="flex gap-2">
+          <input className={`${inputClass} w-full`} value={name} onChange={(e) => setName(e.target.value)} />
+          <Button variant="secondary" disabled={!name.trim() || name === c.name} onClick={() => patch({ name }, "Name updated")}>Save</Button>
+        </div>
+        <p className="mt-2 text-xs text-ink-faint">Login address /c/{c.slug} can&apos;t change — printed QR codes and saved logins depend on it.</p>
+      </Panel>
+      <Panel>
+        <SectionTitle title="VAT" description="The cafe can also change this in its own Settings." />
+        <Switch checked={vat.vatEnabled} onChange={(v) => setVat({ ...vat, vatEnabled: v })} label="VAT registered" description="Adds VAT and the PAN to their bills." />
+        {vat.vatEnabled && (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Field label="Rate (%)"><input className={`${inputClass} tabular w-full`} value={vat.vatRate} onChange={(e) => setVat({ ...vat, vatRate: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+            <Field label="PAN / VAT no."><input className={`${inputClass} w-full`} value={vat.panNumber} onChange={(e) => setVat({ ...vat, panNumber: e.target.value })} /></Field>
+          </div>
+        )}
+        <div className="mt-4 flex justify-end"><Button variant="secondary" onClick={() => patch({ vatEnabled: vat.vatEnabled, vatRate: Number(vat.vatRate || 13), panNumber: vat.panNumber || null }, "VAT updated")}>Save VAT</Button></div>
+      </Panel>
+      <Panel>
+        <SectionTitle title="Features" />
+        <div className="space-y-5">
+          <Switch checked={c.inventoryEnabled} onChange={(v) => patch({ inventoryEnabled: v }, v ? "Inventory on" : "Inventory off")} label="Inventory" description="Stock items, purchases, recipes." />
+          {notInPlan(plan?.inventory)}
+          <Switch checked={c.gamesEnabled} onChange={(v) => patch({ gamesEnabled: v }, v ? "Table game on" : "Table game off")} label="Play while you wait" description="Tic-tac-toe on the customer QR page." />
+          {notInPlan(plan?.tableGame)}
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function PaymentModal({ open, c, onClose, onDone, onError }: { open: boolean; c: Detail; onClose: () => void; onDone: () => void; onError: (m: string) => void }) {
+  const pl = usePlans();
+  const due = pl.cyclePrice(c.plan, c.billingCycle);
+  const [amount, setAmount] = useState(String(due));
+  const [method, setMethod] = useState("eSewa");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setAmount(String(due)); setReference(""); } }, [open, due]);
+  async function go() {
+    setBusy(true);
+    try {
+      await platformFetchJson(`/platform/cafes/${c.id}/payments`, { method: "POST", headers: json, body: JSON.stringify({ amount: Number(amount), method, reference: reference || undefined }) });
+      onDone();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal open={open} onClose={onClose} title="Record subscription payment" size="sm">
+      <p className="mb-4 text-sm text-ink-secondary">{pl.name(c.plan)} · {c.billingCycle}. Marks the cafe active and moves the due date one {c.billingCycle === "yearly" ? "year" : "month"} forward.</p>
+      <div className="space-y-4">
+        <Field label="Amount (Rs)"><input className={`${inputClass} tabular w-full text-lg`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} /></Field>
+        <Field label="Paid via">
+          <div className="grid grid-cols-4 gap-2">
+            {["eSewa", "Khalti", "Bank", "Cash"].map((m) => <button key={m} type="button" onClick={() => setMethod(m)} className={`min-h-10 rounded-lg border text-sm font-medium ${method === m ? "border-brand bg-brand-tint text-brand-strong" : "border-border-subtle text-ink-secondary"}`}>{m}</button>)}
+          </div>
+        </Field>
+        <Field label="Reference"><input className={`${inputClass} w-full`} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Transaction ID (optional)" /></Field>
+      </div>
+      <div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={busy} disabled={!Number(amount)} onClick={go}>Record payment</Button></div>
+    </Modal>
+  );
+}
+
+function PinModal({ user, cafeId, onClose, onDone, onError }: { user: { id: number; name: string } | null; cafeId: number; onClose: () => void; onDone: (m: string) => void; onError: (m: string) => void }) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (user) setPin(String(Math.floor(1000 + Math.random() * 9000))); }, [user]);
+  async function go() {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await platformFetchJson(`/platform/cafes/${cafeId}/users/${user.id}/reset-pin`, { method: "POST", headers: json, body: JSON.stringify({ pin }) });
+      onDone(`${user.name}'s new PIN is ${pin}`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal open={!!user} onClose={onClose} title={`Reset PIN for ${user?.name ?? ""}`} size="sm">
+      <p className="mb-4 text-sm text-ink-secondary">Tell them the new PIN over the phone. It also reactivates the account if it was turned off.</p>
+      <input className={`${inputClass} tabular w-full text-center text-2xl tracking-[0.6em]`} inputMode="numeric" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+      <div className="mt-6 flex justify-end gap-2"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={busy} disabled={pin.length !== 4} onClick={go}>Set PIN</Button></div>
+    </Modal>
   );
 }

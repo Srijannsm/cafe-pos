@@ -1,38 +1,105 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
-import { RecordPaymentDto } from './dto/record-payment.dto.js';
+import { AddPaymentDto, RecordPaymentDto } from './dto/record-payment.dto.js';
 import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
-import { Prisma, OrderStatus } from '../generated/prisma/client.js';
+import { ApplyDiscountDto } from './dto/billing.dto.js';
+import { Prisma, OrderStatus, OrderSource } from '../generated/prisma/client.js';
 import { OrdersGateway } from './orders.gateway.js';
-import { assertNotOverdue } from '../subscription/plan-limits.js';
+import { AuditService } from '../audit/audit.service.js';
+import { assertNotOverdue, hasFeature } from '../subscription/plan-limits.js';
+import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
+
+type Actor = Pick<CurrentUserPayload, 'userId' | 'name' | 'role'> | null;
+const D = (v: string | number | Prisma.Decimal) => new Prisma.Decimal(v);
+const ZERO = D(0);
+
+// Everything the bill needs, in display order: subtotal -> discount -> net
+// -> service charge -> VAT -> total. Kept in one pure function so the
+// estimate the cashier sees and the bill that gets frozen can never drift.
+export type BillTotals = {
+  subtotal: Prisma.Decimal;
+  discountAmount: Prisma.Decimal;
+  serviceCharge: Prisma.Decimal;
+  vatAmount: Prisma.Decimal;
+  total: Prisma.Decimal;
+};
+
+type LineForTotals = {
+  price: Prisma.Decimal;
+  quantity: number;
+  voidedAt: Date | null;
+  orderItemModifiers: { modifier: { priceDelta: Prisma.Decimal } }[];
+};
+
+export function computeTotals(
+  lines: LineForTotals[],
+  discount: { type: 'percent' | 'flat' | null; value: Prisma.Decimal | null },
+  cafe: { vatEnabled: boolean; vatRate: Prisma.Decimal; serviceChargeRate: Prisma.Decimal; pricesIncludeVat: boolean },
+): BillTotals {
+  let subtotal = ZERO;
+  for (const line of lines) {
+    if (line.voidedAt) continue; // voided lines stay on record but never get charged
+    const mods = line.orderItemModifiers.reduce((s, m) => s.plus(m.modifier.priceDelta), ZERO);
+    subtotal = subtotal.plus(line.price.plus(mods).times(line.quantity));
+  }
+
+  let discountAmount = ZERO;
+  if (discount.type && discount.value && discount.value.gt(0)) {
+    discountAmount =
+      discount.type === 'percent'
+        ? subtotal.times(Prisma.Decimal.min(discount.value, 100)).dividedBy(100)
+        : Prisma.Decimal.min(discount.value, subtotal);
+    discountAmount = discountAmount.toDecimalPlaces(2);
+  }
+
+  const net = subtotal.minus(discountAmount);
+  const serviceCharge = net.times(cafe.serviceChargeRate).dividedBy(100).toDecimalPlaces(2);
+  const taxable = net.plus(serviceCharge);
+
+  let vatAmount = ZERO;
+  let total = taxable;
+  if (cafe.vatEnabled) {
+    if (cafe.pricesIncludeVat) {
+      // Menu prices already include VAT -> back-calculate the VAT share.
+      vatAmount = taxable.times(cafe.vatRate).dividedBy(D(100).plus(cafe.vatRate)).toDecimalPlaces(2);
+    } else {
+      vatAmount = taxable.times(cafe.vatRate).dividedBy(100).toDecimalPlaces(2);
+      total = taxable.plus(vatAmount);
+    }
+  }
+
+  return { subtotal, discountAmount, serviceCharge, vatAmount, total: total.toDecimalPlaces(2) };
+}
+
+const ITEM_INCLUDE = {
+  menuItem: true,
+  orderItemModifiers: { include: { modifier: true } },
+} satisfies Prisma.OrderItemInclude;
 
 @Injectable()
 export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private ordersGateway: OrdersGateway,
+    private audit: AuditService,
   ) {}
 
   async findAll(cafeId: number, status?: OrderStatus) {
     return this.prisma.order.findMany({
       where: { cafeId, ...(status ? { status } : {}) },
       include: {
-        orderItems: {
-          include: {
-            menuItem: true,
-            orderItemModifiers: { include: { modifier: true } },
-          },
-        },
+        orderItems: { include: ITEM_INCLUDE, orderBy: { id: 'asc' } },
         table: true,
         waiter: { select: { id: true, name: true } },
+        payments: true,
       },
       orderBy: { createdAt: 'asc' },
     });
   }
 
-  async create(cafeId: number, dto: CreateOrderDto) {
+  async create(cafeId: number, dto: CreateOrderDto, source: OrderSource = 'staff') {
     const table = await this.prisma.restaurantTable.findFirst({
       where: { id: dto.tableId, cafeId },
     });
@@ -47,26 +114,21 @@ export class OrdersService {
         where: { tableId: table.id, status: { notIn: ['paid', 'cancelled'] } },
       });
       if (existingActiveOrder) {
-        throw new BadRequestException(`Table ${dto.tableId} is not free`);
+        throw new BadRequestException(`Table ${table.tableNumber} is not free`);
       }
-      // Heal the stale status
       await this.prisma.restaurantTable.update({
         where: { id: table.id },
         data: { status: 'free' },
       });
     }
 
-    // Block new orders when the cafe subscription is overdue (read-only mode).
     const cafe = await this.prisma.cafe.findUniqueOrThrow({
       where: { id: cafeId },
       select: { plan: true, subscriptionStatus: true },
     });
     assertNotOverdue(cafe);
 
-    // A waiter id from another cafe should never be assignable here --
-    // without this check a valid-looking id from a different tenant would
-    // otherwise pass Prisma's FK check (the users table has no cafe
-    // concept baked into the FK itself) and silently attach cross-tenant.
+    // A waiter id from another cafe should never be assignable here.
     const waiter = await this.prisma.user.findFirst({
       where: { id: dto.waiterId, cafeId },
     });
@@ -75,13 +137,15 @@ export class OrdersService {
       throw new NotFoundException(`Waiter ${dto.waiterId} does not exist`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.create({
+    const order = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
         data: {
           cafeId,
           tableId: dto.tableId,
           waiterId: dto.waiterId,
           orderType: dto.orderType,
+          source,
+          notes: dto.notes?.trim() || null,
         },
       });
 
@@ -90,19 +154,16 @@ export class OrdersService {
         data: { status: 'occupied' },
       });
 
-      return order;
+      return created;
     });
+
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return order;
   }
 
-  // A customer ordering in rounds (food first, a drink later) is the normal
-  // case, not an edge case -- so items can join an order any time before the
-  // bill is generated. Once it's billed the total is locked in, so that (and
-  // paid/cancelled) are the only statuses this refuses.
-  private static readonly ADDABLE_STATUSES: OrderStatus[] = [
-    'pending',
-    'preparing',
-    'served',
-  ];
+  // Items can join an order any time before the bill is generated (people
+  // order in rounds). Once billed, the bill has to be reopened first.
+  private static readonly ADDABLE_STATUSES: OrderStatus[] = ['pending', 'preparing', 'served'];
 
   async addItem(cafeId: number, orderId: number, dto: AddOrderDto) {
     const order = await this.prisma.order.findFirst({
@@ -115,23 +176,35 @@ export class OrdersService {
 
     if (!OrdersService.ADDABLE_STATUSES.includes(order.status)) {
       throw new BadRequestException(
-        `Cannot add items to an order with status "${order.status}"`,
+        order.status === 'billed'
+          ? 'This bill is already printed -- reopen it before adding items'
+          : `Cannot add items to an order with status "${order.status}"`,
       );
     }
 
     const menuItem = await this.prisma.menuItem.findFirst({
       where: { id: dto.menuItemId, cafeId },
+      include: { modifiers: { select: { id: true } } },
     });
 
     if (!menuItem) {
       throw new NotFoundException(`Menu item ${dto.menuItemId} does not exist`);
     }
+    if (!menuItem.isAvailable) {
+      throw new BadRequestException(`"${menuItem.name}" is sold out`);
+    }
+
+    // Modifiers must belong to this item -- otherwise a crafted request
+    // could attach another item's (or another cafe's) priced modifier.
+    const allowedModifierIds = new Set(menuItem.modifiers.map((m) => m.id));
+    const modifierIds = [...new Set(dto.modifierIds ?? [])];
+    if (modifierIds.some((id) => !allowedModifierIds.has(id))) {
+      throw new BadRequestException('One of the selected options does not belong to this item');
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      // Re-check stock inside the transaction rather than trusting the
-      // `menuItem` fetched above -- that read happened before the
-      // transaction opened, so it can't be relied on to still be current
-      // if two waiters add the last few of the same item at once.
+      // Re-check finished-goods stock inside the transaction (see CLAUDE.md
+      // "Inventory tracking") so two waiters can't both take the last one.
       if (menuItem.trackStock) {
         const current = await tx.menuItem.findUniqueOrThrow({ where: { id: menuItem.id } });
         if (current.stockQuantity < dto.quantity) {
@@ -150,29 +223,22 @@ export class OrdersService {
           orderId,
           menuItemId: dto.menuItemId,
           quantity: dto.quantity,
-          price: menuItem.price, // snapshotting the CURRENT price at order time
+          price: menuItem.price, // snapshot the CURRENT price at order time
+          station: menuItem.station, // snapshot so moving an item to another station later doesn't reroute old tickets
+          note: dto.note?.trim() || null,
         },
       });
 
-      if (dto.modifierIds && dto.modifierIds.length > 0) {
+      if (modifierIds.length > 0) {
         await tx.orderItemModifier.createMany({
-          data: dto.modifierIds.map((modifierId) => ({
-            orderItemId: orderItem.id,
-            modifierId,
-          })),
+          data: modifierIds.map((modifierId) => ({ orderItemId: orderItem.id, modifierId })),
         });
       }
 
-      // A new round on an order the kitchen already finished ("served")
-      // goes back to "pending" so the waiter can review, remove items if
-      // the customer changes their mind, and then explicitly send to kitchen.
-      // Previously this went straight to "preparing" which bypassed the
-      // waiter's chance to cancel before the kitchen sees the new items.
+      // A new round on an order the kitchen already finished goes back to
+      // "pending" so the waiter reviews it and explicitly sends it.
       if (order.status === 'served') {
-        await tx.order.update({
-          where: { id: orderId },
-          data: { status: 'pending' },
-        });
+        await tx.order.update({ where: { id: orderId }, data: { status: 'pending' } });
       }
 
       return tx.orderItem.findUnique({
@@ -181,430 +247,576 @@ export class OrdersService {
       });
     });
 
-    // Don't auto-notify the kitchen — waiter will press "Send to kitchen"
-    // themselves once they're happy with the new round.
-
+    this.ordersGateway.emitFloorChanged(cafeId);
     return result;
   }
 
   async sendToKitchen(cafeId: number, orderId: number) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, cafeId },
-    include: { orderItems: true },
-  });
-
-  if (!order) {
-    throw new NotFoundException(`Order ${orderId} does not exist`);
-  }
-
-  // Allow from 'pending' (first round) AND 'preparing' (new items added
-  // while kitchen is still working on the previous round).
-  if (order.status !== 'pending' && order.status !== 'preparing') {
-    throw new BadRequestException(
-      `Order ${orderId} cannot be sent to kitchen from status "${order.status}"`,
-    );
-  }
-
-  const pendingItems = order.orderItems.filter((i) => i.status === 'pending');
-
-  if (pendingItems.length === 0) {
-    throw new BadRequestException(
-      `Order ${orderId} has no new items to send — all items are already in the kitchen`,
-    );
-  }
-
-  // Mark all currently-pending items as sentToKitchen so that after a table
-  // transfer (or page reload) the frontend can still distinguish
-  // "in kitchen" from "added but not yet sent".
-  const pendingItemIds = pendingItems.map((i) => i.id);
-  if (pendingItemIds.length > 0) {
-    await this.prisma.$executeRaw`
-      UPDATE order_items
-      SET "sentToKitchen" = true
-      WHERE id = ANY(${pendingItemIds}::int[])
-    `;
-  }
-
-  const updated = await this.prisma.order.update({
-    where: { id: orderId },
-    data: { status: 'preparing' },
-  });
-
-  this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.id });
-
-  return updated;
-}
-
-    async markItemReady(cafeId: number, orderItemId: number) {
-    // OrderItem has no cafeId of its own (scoped transitively through its
-    // order), so the lookup joins up to order to enforce the tenant
-    // boundary -- see the schema comments on OrderItem/Payment/Modifier.
-    const orderItem = await this.prisma.orderItem.findFirst({
-    where: { id: orderItemId, order: { cafeId } },
-  });
-
-  if (!orderItem) {
-    throw new NotFoundException(`Order item ${orderItemId} does not exist`);
-  }
-
-  if (orderItem.status !== 'pending') {
-    throw new BadRequestException(
-      `Order item ${orderItemId} cannot be marked ready from status "${orderItem.status}"`,
-    );
-  }
-
-  const updated = await this.prisma.orderItem.update({
-    where: { id: orderItemId },
-    data: { status: 'ready' },
-  });
-
-  this.ordersGateway.emitOrderItemReady(cafeId, {
-    orderId: updated.orderId,
-    orderItemId: updated.id,
-  });
-
-  return updated;
-}
-
-    async serve(cafeId: number, orderId: number) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, cafeId },
-    include: { orderItems: true },
-  });
-
-  if (!order) {
-    throw new NotFoundException(`Order ${orderId} does not exist`);
-  }
-
-  if (order.status !== 'preparing') {
-    throw new BadRequestException(
-      `Order ${orderId} cannot be served from status "${order.status}"`,
-    );
-  }
-
-  const notReady = order.orderItems.filter((item) => item.status === 'pending');
-
-  if (notReady.length > 0) {
-    throw new BadRequestException(
-      `Order ${orderId} cannot be served -- ${notReady.length} item(s) are still pending in the kitchen`,
-    );
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    await tx.orderItem.updateMany({
-      where: { orderId, status: 'ready' },
-      data: { status: 'served' },
-    });
-
-    return tx.order.update({
-      where: { id: orderId },
-      data: { status: 'served' },
-    });
-  });
-}
-
-    async cancel(cafeId: number, orderId: number) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, cafeId },
-    include: { orderItems: { include: { menuItem: true } } },
-  });
-
-  if (!order) {
-    throw new NotFoundException(`Order ${orderId} does not exist`);
-  }
-
-  if (order.status !== 'pending') {
-    throw new BadRequestException(
-      `Order ${orderId} cannot be cancelled from status "${order.status}" — cancellation is only allowed before the order is sent to kitchen`,
-    );
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    // The stock for any tracked item was already decremented when it was
-    // added (see addItem) -- a cancelled order never got made, so that
-    // stock needs to go back rather than staying lost.
-    for (const item of order.orderItems) {
-      if (item.menuItem.trackStock) {
-        await tx.menuItem.update({
-          where: { id: item.menuItemId },
-          data: { stockQuantity: { increment: item.quantity } },
-        });
-      }
-    }
-
-    const cancelledOrder = await tx.order.update({
-      where: { id: orderId },
-      data: { status: 'cancelled' },
-    });
-
-    await tx.restaurantTable.update({
-      where: { id: order.tableId },
-      data: { status: 'free' },
-    });
-
-    return cancelledOrder;
-  });
-}
-
-  async generateBill(cafeId: number, orderId: number) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, cafeId },
-      include: {
-        orderItems: {
-          include: {
-            orderItemModifiers: {
-              include: { modifier: true },
-            },
-          },
-        },
-        cafe: {
-          select: { vatEnabled: true, vatRate: true },
-        },
-      },
+      include: { orderItems: true },
     });
 
     if (!order) {
       throw new NotFoundException(`Order ${orderId} does not exist`);
     }
 
-    if (order.status !== 'served') {
+    if (order.status !== 'pending' && order.status !== 'preparing') {
       throw new BadRequestException(
-        `Order ${orderId} cannot be billed from status "${order.status}"`,
+        `Order ${orderId} cannot be sent to kitchen from status "${order.status}"`,
       );
     }
 
-    let subtotal = new Prisma.Decimal(0);
+    const pendingItems = order.orderItems.filter((i) => i.status === 'pending' && !i.sentToKitchen && !i.voidedAt);
 
-    for (const item of order.orderItems) {
-      const modifierTotal = item.orderItemModifiers.reduce(
-        (sum, oim) => sum.plus(oim.modifier.priceDelta),
-        new Prisma.Decimal(0),
-      );
-      const lineTotal = item.price.plus(modifierTotal).times(item.quantity);
-      subtotal = subtotal.plus(lineTotal);
+    if (pendingItems.length === 0) {
+      throw new BadRequestException('No new items to send -- everything is already in the kitchen');
     }
 
-    let total: Prisma.Decimal;
-    let vatAmount: Prisma.Decimal | null = null;
-
-    if (order.cafe.vatEnabled) {
-      // vatRate is stored as a percentage (e.g. 13 means 13%)
-      vatAmount = subtotal.times(order.cafe.vatRate).dividedBy(100).toDecimalPlaces(2);
-      total = subtotal.plus(vatAmount);
-    } else {
-      total = subtotal;
-    }
-
-    // Atomically increment the cafe's bill counter and assign the next
-    // sequential bill number to this order. Using $transaction ensures
-    // no two bills for the same cafe can get the same number even under
-    // concurrent requests.
-    return this.prisma.$transaction(async (tx) => {
-      const updatedCafe = await tx.cafe.update({
-        where: { id: cafeId },
-        data: { lastBillNumber: { increment: 1 } },
-        select: { lastBillNumber: true },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({
+        where: { id: { in: pendingItems.map((i) => i.id) } },
+        data: { sentToKitchen: true },
       });
+      return tx.order.update({ where: { id: orderId }, data: { status: 'preparing' } });
+    });
+
+    this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.id });
+    return updated;
+  }
+
+  async markItemReady(cafeId: number, orderItemId: number) {
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: orderItemId, order: { cafeId } },
+    });
+
+    if (!orderItem) {
+      throw new NotFoundException(`Order item ${orderItemId} does not exist`);
+    }
+    if (orderItem.voidedAt) {
+      throw new BadRequestException('This item was voided');
+    }
+    if (orderItem.status !== 'pending') {
+      throw new BadRequestException(
+        `Order item ${orderItemId} cannot be marked ready from status "${orderItem.status}"`,
+      );
+    }
+
+    const updated = await this.prisma.orderItem.update({
+      where: { id: orderItemId },
+      data: { status: 'ready' },
+    });
+
+    this.ordersGateway.emitOrderItemReady(cafeId, { orderId: updated.orderId, orderItemId: updated.id });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return updated;
+  }
+
+  // KDS "recall": a bumped item goes back onto the board.
+  async recallItem(cafeId: number, orderItemId: number) {
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: orderItemId, order: { cafeId, status: { in: ['preparing'] } } },
+    });
+    if (!orderItem || orderItem.status !== 'ready') {
+      throw new BadRequestException('Only a ready item on an open ticket can be recalled');
+    }
+    const updated = await this.prisma.orderItem.update({ where: { id: orderItemId }, data: { status: 'pending' } });
+    this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.orderId });
+    return updated;
+  }
+
+  async serve(cafeId: number, orderId: number) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+      include: { orderItems: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} does not exist`);
+    }
+    if (order.status !== 'preparing') {
+      throw new BadRequestException(`Order ${orderId} cannot be served from status "${order.status}"`);
+    }
+
+    const notReady = order.orderItems.filter((item) => item.status === 'pending' && !item.voidedAt);
+    if (notReady.length > 0) {
+      throw new BadRequestException(
+        `${notReady.length} item(s) are still being prepared in the kitchen`,
+      );
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({ where: { orderId, status: 'ready' }, data: { status: 'served' } });
+      return tx.order.update({ where: { id: orderId }, data: { status: 'served' } });
+    });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return result;
+  }
+
+  // Cancelling a whole order. Before the kitchen sees it anyone can cancel;
+  // after that it's a money-sensitive action -- admin only, reason required,
+  // written to the audit log. Paid orders can never be cancelled.
+  async cancel(cafeId: number, orderId: number, actor: Actor, reason?: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+      include: { orderItems: { include: { menuItem: true } }, payments: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} does not exist`);
+    }
+    if (order.status === 'paid' || order.status === 'cancelled') {
+      throw new BadRequestException(`Order is already ${order.status}`);
+    }
+    if (order.payments.length > 0) {
+      throw new BadRequestException('This bill already has payments recorded and cannot be cancelled');
+    }
+    if (order.status !== 'pending') {
+      if (actor?.role !== 'admin') {
+        throw new ForbiddenException('Only an admin can cancel an order the kitchen has already started');
+      }
+      if (!reason?.trim()) {
+        throw new BadRequestException('A reason is required to cancel this order');
+      }
+    }
+
+    const cancelled = await this.prisma.$transaction(async (tx) => {
+      for (const item of order.orderItems) {
+        if (item.menuItem.trackStock && !item.voidedAt) {
+          await tx.menuItem.update({
+            where: { id: item.menuItemId },
+            data: { stockQuantity: { increment: item.quantity } },
+          });
+        }
+      }
+
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { status: 'cancelled', cancelReason: reason?.trim() || null },
+      });
+
+      await tx.restaurantTable.update({ where: { id: order.tableId }, data: { status: 'free' } });
+      await tx.restaurantTable.updateMany({
+        where: { mergedIntoId: order.tableId },
+        data: { mergedIntoId: null, status: 'free' },
+      });
+
+      if (order.status !== 'pending') {
+        await this.audit.log(cafeId, actor, 'order.cancel', 'order', orderId, {
+          reason, status: order.status,
+        }, tx);
+      }
+      return updated;
+    });
+
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return cancelled;
+  }
+
+  // ── Billing ─────────────────────────────────────────────────────────
+
+  private async loadForBilling(cafeId: number, orderId: number) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+      include: {
+        orderItems: { include: { orderItemModifiers: { include: { modifier: true } } } },
+        payments: true,
+        cafe: { select: { vatEnabled: true, vatRate: true, serviceChargeRate: true, pricesIncludeVat: true } },
+      },
+    });
+    if (!order) throw new NotFoundException(`Order ${orderId} does not exist`);
+    return order;
+  }
+
+  private totalsFor(order: Awaited<ReturnType<OrdersService['loadForBilling']>>) {
+    return computeTotals(
+      order.orderItems,
+      { type: order.discountType, value: order.discountValue },
+      order.cafe,
+    );
+  }
+
+  /** Live estimate (before the bill is printed) -- what the cashier sees. */
+  async estimate(cafeId: number, orderId: number) {
+    const order = await this.loadForBilling(cafeId, orderId);
+    const t = this.totalsFor(order);
+    const paid = order.payments.reduce((s, p) => s.plus(p.amount), ZERO);
+    return {
+      subtotal: t.subtotal.toFixed(2),
+      discountAmount: t.discountAmount.toFixed(2),
+      serviceCharge: t.serviceCharge.toFixed(2),
+      vatAmount: t.vatAmount.toFixed(2),
+      total: t.total.toFixed(2),
+      paid: paid.toFixed(2),
+      remaining: Prisma.Decimal.max(t.total.minus(paid), 0).toFixed(2),
+    };
+  }
+
+  async applyDiscount(cafeId: number, orderId: number, dto: ApplyDiscountDto, actor: Actor) {
+    const order = await this.loadForBilling(cafeId, orderId);
+    if (order.status === 'paid' || order.status === 'cancelled') {
+      throw new BadRequestException(`Cannot discount a ${order.status} order`);
+    }
+    if (order.payments.length > 0) {
+      throw new BadRequestException('Payments are already recorded on this bill -- discount can no longer change');
+    }
+    if (dto.type === 'percent' && dto.value > 100) {
+      throw new BadRequestException('A percentage discount cannot exceed 100%');
+    }
+    // Cashiers can give up to 20%; anything bigger is an admin decision.
+    if (actor?.role !== 'admin' && dto.type === 'percent' && dto.value > 20) {
+      throw new ForbiddenException('Discounts above 20% need an admin');
+    }
+
+    const removing = dto.value === 0;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const data: Prisma.OrderUpdateInput = removing
+        ? { discountType: null, discountValue: null, discountAmount: null, discountReason: null }
+        : { discountType: dto.type, discountValue: dto.value, discountReason: dto.reason.trim() };
+      let saved = await tx.order.update({ where: { id: orderId }, data });
+
+      // If the bill was already generated, refresh its frozen totals too.
+      if (order.status === 'billed') {
+        const t = computeTotals(
+          order.orderItems,
+          { type: saved.discountType, value: saved.discountValue },
+          order.cafe,
+        );
+        saved = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            subtotal: t.subtotal,
+            discountAmount: t.discountAmount,
+            serviceCharge: t.serviceCharge,
+            vatAmount: order.cafe.vatEnabled ? t.vatAmount : null,
+            total: t.total,
+          },
+        });
+      }
+
+      await this.audit.log(cafeId, actor, removing ? 'discount.remove' : 'discount.apply', 'order', orderId, {
+        type: dto.type, value: dto.value, reason: dto.reason,
+      }, tx);
+      return saved;
+    });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return updated;
+  }
+
+  async generateBill(cafeId: number, orderId: number) {
+    const order = await this.loadForBilling(cafeId, orderId);
+
+    if (order.status !== 'served') {
+      throw new BadRequestException(`Order ${orderId} cannot be billed from status "${order.status}"`);
+    }
+    if (!order.orderItems.some((i) => !i.voidedAt)) {
+      throw new BadRequestException('There is nothing to bill on this order');
+    }
+
+    const t = this.totalsFor(order);
+
+    // Atomically take the next bill number for this cafe -- no two bills
+    // ever share a number even under concurrent requests. A reopened bill
+    // keeps its original number (it's the same bill, re-issued).
+    const billed = await this.prisma.$transaction(async (tx) => {
+      let billNumber = order.billNumber;
+      if (billNumber == null) {
+        const updatedCafe = await tx.cafe.update({
+          where: { id: cafeId },
+          data: { lastBillNumber: { increment: 1 } },
+          select: { lastBillNumber: true },
+        });
+        billNumber = updatedCafe.lastBillNumber;
+      }
 
       return tx.order.update({
         where: { id: orderId },
         data: {
           status: 'billed',
-          billNumber: updatedCafe.lastBillNumber,
-          subtotal: order.cafe.vatEnabled ? subtotal : null,
-          vatAmount,
-          total,
+          billNumber,
+          subtotal: t.subtotal,
+          discountAmount: t.discountAmount.gt(0) ? t.discountAmount : null,
+          serviceCharge: t.serviceCharge.gt(0) ? t.serviceCharge : null,
+          vatAmount: order.cafe.vatEnabled ? t.vatAmount : null,
+          total: t.total,
         },
       });
     });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return billed;
   }
 
-  // A customer can still say "add one more thing" after being billed but
-  // before actually paying -- this undoes generateBill so the order goes
-  // back through addItem()'s normal 'served' -> 'preparing' reopening if
-  // something new is added, or straight back to Serve if the waiter just
-  // mis-clicked. The total is cleared rather than left stale, since it was
-  // only ever correct for the item set at the moment it was billed.
-  async reopenToServed(cafeId: number, orderId: number) {
+  // A customer can still add something after the bill is printed but
+  // before paying. Allowed only while no money has been taken; logged.
+  async reopenToServed(cafeId: number, orderId: number, actor: Actor) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, cafeId },
+      include: { payments: true },
     });
 
-    if (!order) {
-      throw new NotFoundException(`Order ${orderId} does not exist`);
-    }
-
+    if (!order) throw new NotFoundException(`Order ${orderId} does not exist`);
     if (order.status !== 'billed') {
-      throw new BadRequestException(
-        `Order ${orderId} cannot be reopened from status "${order.status}"`,
-      );
+      throw new BadRequestException(`Order ${orderId} cannot be reopened from status "${order.status}"`);
+    }
+    if (order.payments.length > 0) {
+      throw new BadRequestException('Part of this bill is already paid -- it cannot be reopened');
     }
 
+    const reopened = await this.prisma.$transaction(async (tx) => {
+      await this.audit.log(cafeId, actor, 'bill.reopen', 'order', orderId, {
+        billNumber: order.billNumber, total: order.total?.toFixed(2), printCount: order.printCount,
+      }, tx);
+      return tx.order.update({
+        where: { id: orderId },
+        data: { status: 'served', total: null, subtotal: null, vatAmount: null, serviceCharge: null, discountAmount: null },
+      });
+    });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return reopened;
+  }
+
+  async markPrinted(cafeId: number, orderId: number) {
+    const order = await this.prisma.order.findFirst({ where: { id: orderId, cafeId } });
+    if (!order) throw new NotFoundException(`Order ${orderId} does not exist`);
+    if (order.status !== 'billed' && order.status !== 'paid') {
+      throw new BadRequestException('Only a generated bill can be printed');
+    }
     return this.prisma.order.update({
       where: { id: orderId },
-      data: { status: 'served', total: null, subtotal: null, vatAmount: null },
+      data: { printCount: { increment: 1 } },
+      select: { id: true, printCount: true },
     });
   }
 
-  async recordPayment(cafeId: number, orderId: number, dto: RecordPaymentDto) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, cafeId },
-    include: {
-      orderItems: {
-        include: {
-          menuItem: { select: { id: true, trackStock: true } },
-        },
-      },
-    },
-  });
-
-  if (!order) {
-    throw new NotFoundException(`Order ${orderId} does not exist`);
+  /** Legacy single-tap "paid in full by X" -- kept so older screens keep working. */
+  async recordPayment(cafeId: number, orderId: number, dto: RecordPaymentDto, actor: Actor) {
+    const order = await this.loadForBilling(cafeId, orderId);
+    if (order.status !== 'billed' || !order.total) {
+      throw new BadRequestException(`Order ${orderId} cannot be paid from status "${order.status}"`);
+    }
+    const paid = order.payments.reduce((s, p) => s.plus(p.amount), ZERO);
+    const remaining = order.total.minus(paid);
+    return this.addPayment(cafeId, orderId, { method: dto.method, amount: remaining.toNumber() }, actor);
   }
 
-  if (order.status !== 'billed') {
-    throw new BadRequestException(
-      `Order ${orderId} cannot be paid from status "${order.status}"`,
-    );
-  }
-
-  return this.prisma.$transaction(async (tx) => {
-    const payment = await tx.payment.create({
-      data: {
-        orderId,
-        amount: order.total!,
-        method: dto.method,
+  // One payment towards a bill. When payments cover the total the order
+  // closes: table freed, merged tables released, recipe ingredients deducted.
+  async addPayment(cafeId: number, orderId: number, dto: AddPaymentDto, actor: Actor) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+      include: {
+        payments: true,
+        orderItems: { select: { menuItemId: true, quantity: true, voidedAt: true } },
+        cafe: { select: { inventoryEnabled: true, plan: true, subscriptionStatus: true } },
       },
     });
 
-    await tx.order.update({
-      where: { id: orderId },
-      data: { status: 'paid' },
-    });
-
-    await tx.restaurantTable.update({
-      where: { id: order.tableId },
-      data: { status: 'free' },
-    });
-
-    // When the paid order was on a physically merged primary table, release
-    // the secondary tables back to free so they appear on the floor again.
-    await tx.restaurantTable.updateMany({
-      where: { mergedIntoId: order.tableId },
-      data: { mergedIntoId: null, status: 'free' },
-    });
-
-    // Deduct stock for tracked menu items
-    for (const item of order.orderItems) {
-      if (!item.menuItem.trackStock) continue;
-      await tx.menuItem.update({
-        where: { id: item.menuItem.id },
-        data: {
-          stockQuantity: {
-            decrement: item.quantity,
-          },
-        },
-      });
-      // Clamp to 0 — never go negative
-      await tx.$executeRaw`
-        UPDATE "menu_items"
-        SET "stock_quantity" = GREATEST("stock_quantity", 0)
-        WHERE id = ${item.menuItem.id}
-      `;
+    if (!order) throw new NotFoundException(`Order ${orderId} does not exist`);
+    if (order.status !== 'billed' || !order.total) {
+      throw new BadRequestException('Generate the bill before taking payment');
     }
 
-    return payment;
-  });
-}
+    const paidSoFar = order.payments.reduce((s, p) => s.plus(p.amount), ZERO);
+    const remaining = order.total.minus(paidSoFar);
+    const amount = D(dto.amount);
+    if (amount.gt(remaining.plus(0.001))) {
+      throw new BadRequestException(`Only Rs ${remaining.toFixed(2)} is left to pay on this bill`);
+    }
 
+    const openShift = await this.prisma.shift.findFirst({
+      where: { cafeId, closedAt: null },
+      select: { id: true },
+    });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          orderId,
+          amount,
+          method: dto.method,
+          reference: dto.reference?.trim() || null,
+          receivedById: actor?.userId ?? null,
+          shiftId: openShift?.id ?? null,
+        },
+      });
+
+      const fullyPaid = paidSoFar.plus(amount).gte(order.total!.minus(0.001));
+      if (fullyPaid) {
+        await tx.order.update({ where: { id: orderId }, data: { status: 'paid' } });
+        await tx.restaurantTable.update({ where: { id: order.tableId }, data: { status: 'free' } });
+        await tx.restaurantTable.updateMany({
+          where: { mergedIntoId: order.tableId },
+          data: { mergedIntoId: null, status: 'free' },
+        });
+        // NOTE: finished-goods stock (MenuItem.trackStock) was already taken
+        // when the item was added -- the old code decremented it a second
+        // time here, which double-counted every sale. Only recipe
+        // ingredients are deducted at payment time.
+        if (order.cafe.inventoryEnabled && hasFeature(order.cafe, 'inventory')) {
+          await this.deductRecipes(tx, cafeId, orderId, order.orderItems, actor);
+        }
+      }
+      return { payment, fullyPaid, remaining: Prisma.Decimal.max(remaining.minus(amount), 0).toFixed(2) };
+    });
+
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return result;
+  }
+
+  private async deductRecipes(
+    tx: Prisma.TransactionClient,
+    cafeId: number,
+    orderId: number,
+    items: { menuItemId: number; quantity: number; voidedAt: Date | null }[],
+    actor: Actor,
+  ) {
+    const live = items.filter((i) => !i.voidedAt);
+    if (live.length === 0) return;
+    const recipes = await tx.recipeLine.findMany({
+      where: { menuItemId: { in: [...new Set(live.map((i) => i.menuItemId))] }, stockItem: { cafeId } },
+      include: { stockItem: { select: { avgCost: true } } },
+    });
+    if (recipes.length === 0) return;
+
+    // Sum per stock item so one bill = one movement per ingredient.
+    const usage = new Map<number, { qty: Prisma.Decimal; cost: Prisma.Decimal }>();
+    for (const item of live) {
+      for (const line of recipes.filter((r) => r.menuItemId === item.menuItemId)) {
+        const prev = usage.get(line.stockItemId) ?? { qty: ZERO, cost: line.stockItem.avgCost };
+        usage.set(line.stockItemId, { qty: prev.qty.plus(line.quantity.times(item.quantity)), cost: prev.cost });
+      }
+    }
+    for (const [stockItemId, u] of usage) {
+      await tx.stockMovement.create({
+        data: {
+          cafeId, stockItemId, type: 'sale', quantity: u.qty.negated(), unitCost: u.cost,
+          refType: 'order', refId: orderId, createdById: actor?.userId ?? null,
+        },
+      });
+      await tx.stockItem.update({ where: { id: stockItemId }, data: { currentQty: { decrement: u.qty } } });
+    }
+  }
+
+  // ── Items ───────────────────────────────────────────────────────────
+
+  // Removing an item the kitchen hasn't seen yet is just a correction --
+  // the row is deleted. Once it reached the kitchen, use voidItem instead.
   async removeItem(cafeId: number, orderItemId: number) {
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: orderItemId, order: { cafeId } },
-      include: { order: { select: { id: true, status: true } } },
+      include: { order: { select: { id: true, status: true } }, menuItem: true },
     });
 
     if (!orderItem) {
       throw new NotFoundException(`Order item ${orderItemId} does not exist`);
     }
 
-    const orderStatus = orderItem.order.status;
-
-    // Allow removal when order is still pending (not sent to kitchen yet)
-    // OR when order is preparing but this specific item is still pending in the
-    // kitchen (waiter added a new round and wants to remove before kitchen sees it).
-    // Items already marked ready or served cannot be removed.
-    if (orderStatus === 'pending') {
-      // Fine — order hasn't gone to kitchen yet
-    } else if (orderStatus === 'preparing' && orderItem.status === 'pending') {
-      // Fine — item not yet picked up by kitchen
-    } else {
-      throw new BadRequestException(
-        orderStatus === 'preparing'
-          ? 'This item is already being prepared by the kitchen and cannot be removed'
-          : 'Items can only be removed before they reach the kitchen',
-      );
+    if (orderItem.sentToKitchen || !['pending', 'preparing', 'served'].includes(orderItem.order.status)) {
+      throw new BadRequestException('This item already reached the kitchen -- void it with a reason instead');
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await tx.orderItemModifier.deleteMany({ where: { orderItemId } });
       await tx.orderItem.delete({ where: { id: orderItemId } });
-
-      // If this was the last pending item on a preparing order and removing it
-      // leaves no items at all, or all remaining items are ready/served,
-      // we don't need to do anything — the order status stays as-is.
-      // (The kitchen will notice nothing is left to prepare.)
+      if (orderItem.menuItem.trackStock) {
+        await tx.menuItem.update({
+          where: { id: orderItem.menuItemId },
+          data: { stockQuantity: { increment: orderItem.quantity } },
+        });
+      }
     });
+    this.ordersGateway.emitFloorChanged(cafeId);
+  }
+
+  // Void = the item was sent to the kitchen but won't be charged (customer
+  // changed their mind, wrong item, spilled). The row is KEPT with who/why so
+  // it shows struck-through on the KDS and in the discounts & voids report.
+  async voidItem(cafeId: number, orderItemId: number, reason: string, actor: Actor) {
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: orderItemId, order: { cafeId } },
+      include: { order: { select: { id: true, status: true } }, menuItem: true },
+    });
+    if (!orderItem) throw new NotFoundException(`Order item ${orderItemId} does not exist`);
+    if (orderItem.voidedAt) throw new BadRequestException('Already voided');
+    if (orderItem.order.status === 'billed') {
+      throw new BadRequestException('Reopen the bill before voiding an item');
+    }
+    if (orderItem.order.status === 'paid' || orderItem.order.status === 'cancelled') {
+      throw new BadRequestException(`Cannot void an item on a ${orderItem.order.status} order`);
+    }
+
+    const voided = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.orderItem.update({
+        where: { id: orderItemId },
+        data: { voidedAt: new Date(), voidReason: reason.trim(), voidedById: actor?.userId ?? null },
+      });
+      if (orderItem.menuItem.trackStock) {
+        await tx.menuItem.update({
+          where: { id: orderItem.menuItemId },
+          data: { stockQuantity: { increment: orderItem.quantity } },
+        });
+      }
+      await this.audit.log(cafeId, actor, 'item.void', 'order', orderItem.orderId, {
+        orderItemId, item: orderItem.menuItem.name, quantity: orderItem.quantity,
+        amount: orderItem.price.times(orderItem.quantity).toFixed(2), reason,
+      }, tx);
+
+      // If voiding leaves nothing pending in the kitchen, the order is ready to serve.
+      const stillCooking = await tx.orderItem.count({
+        where: { orderId: orderItem.orderId, status: 'pending', sentToKitchen: true, voidedAt: null },
+      });
+      if (stillCooking === 0 && orderItem.order.status === 'preparing') {
+        const anyLive = await tx.orderItem.count({ where: { orderId: orderItem.orderId, voidedAt: null } });
+        if (anyLive > 0) {
+          await tx.orderItem.updateMany({ where: { orderId: orderItem.orderId, status: 'ready' }, data: { status: 'served' } });
+          await tx.order.update({ where: { id: orderItem.orderId }, data: { status: 'served' } });
+        }
+      }
+      return updated;
+    });
+
+    this.ordersGateway.emitCafe(cafeId, 'order.itemVoided', { orderId: orderItem.orderId, orderItemId });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return voided;
   }
 
   async findOne(cafeId: number, orderId: number) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, cafeId },
-    include: {
-      orderItems: {
-        include: {
-          menuItem: true,
-          orderItemModifiers: {
-            include: { modifier: true },
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, cafeId },
+      include: {
+        orderItems: { include: ITEM_INCLUDE, orderBy: { id: 'asc' } },
+        table: true,
+        waiter: { select: { id: true, name: true } },
+        payments: { orderBy: { paidAt: 'asc' } },
+        cafe: {
+          select: {
+            name: true, vatEnabled: true, vatRate: true, panNumber: true, logoUrl: true,
+            address: true, phone: true, wifiName: true, wifiPassword: true, instagram: true,
+            receiptFooter: true, serviceChargeRate: true, pricesIncludeVat: true,
           },
         },
       },
-      table: true,
-      waiter: { select: { id: true, name: true } },
-      payments: true,
-      cafe: { select: { name: true, vatEnabled: true, vatRate: true, panNumber: true } },
-    },
-  });
-
-  if (!order) {
-    throw new NotFoundException(`Order ${orderId} does not exist`);
-  }
-
-  return order;
-}
-
-
-  async updateNotes(cafeId: number, orderId: number, dto: UpdateOrderNotesDto) {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, cafeId },
     });
 
     if (!order) {
       throw new NotFoundException(`Order ${orderId} does not exist`);
     }
 
+    return order;
+  }
+
+  async updateNotes(cafeId: number, orderId: number, dto: UpdateOrderNotesDto) {
+    const order = await this.prisma.order.findFirst({ where: { id: orderId, cafeId } });
+    if (!order) throw new NotFoundException(`Order ${orderId} does not exist`);
     return this.prisma.order.update({
       where: { id: orderId },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      data: { notes: dto.notes?.trim() || null } as any,
+      data: { notes: dto.notes?.trim() || null },
     });
   }
 
   /**
    * Merge all items from `sourceOrderId` into `targetOrderId`, then cancel
-   * the source order so its table is freed. Both orders must belong to the
-   * same cafe and be in an active (non-paid, non-cancelled) state.
-   *
-   * The source table's status automatically becomes "free" because no active
-   * order references it anymore.
+   * the source order so its table is freed.
    */
   async mergeInto(cafeId: number, sourceOrderId: number, targetOrderId: number) {
     if (sourceOrderId === targetOrderId) {
@@ -623,17 +835,10 @@ export class OrdersService {
       if (!source) throw new NotFoundException(`Order ${sourceOrderId} does not exist`);
       if (!target) throw new NotFoundException(`Order ${targetOrderId} does not exist`);
 
-      const terminal = ['paid', 'cancelled'] as const;
-      if (terminal.includes(source.status as typeof terminal[number])) {
-        throw new BadRequestException('Source order is already closed');
-      }
-      if (terminal.includes(target.status as typeof terminal[number])) {
-        throw new BadRequestException('Target order is already closed');
-      }
+      const closed: OrderStatus[] = ['paid', 'cancelled', 'billed'];
+      if (closed.includes(source.status)) throw new BadRequestException(`Source order is ${source.status}`);
+      if (closed.includes(target.status)) throw new BadRequestException(`Target order is ${target.status}`);
 
-      // Re-create each item from the source on the target order.
-      // Items that were already prepared/served are moved over as-is; the
-      // kitchen has already done that work and it should appear on the merged bill.
       for (const item of source.orderItems) {
         await tx.orderItem.create({
           data: {
@@ -643,6 +848,11 @@ export class OrdersService {
             price: item.price,
             status: item.status,
             sentToKitchen: item.sentToKitchen,
+            note: item.note,
+            station: item.station,
+            voidedAt: item.voidedAt,
+            voidReason: item.voidReason,
+            voidedById: item.voidedById,
             orderItemModifiers: {
               create: item.orderItemModifiers.map((oim) => ({ modifierId: oim.modifierId })),
             },
@@ -650,67 +860,51 @@ export class OrdersService {
         });
       }
 
-      // Cancel the source order (frees the source table implicitly)
       await tx.order.update({
         where: { id: sourceOrderId },
-        data: { status: 'cancelled' },
+        data: { status: 'cancelled', cancelReason: `Merged into order #${targetOrderId}` },
       });
+      await tx.restaurantTable.update({ where: { id: source.tableId }, data: { status: 'free' } });
 
-      // If source was in kitchen (preparing) or had ready/served items,
-      // ensure target is also preparing so kitchen state is preserved.
-      const sourceWasActive = source.status === 'preparing' ||
-        source.orderItems.some((i) => i.status === 'ready' || i.status === 'served');
-      if (sourceWasActive && target.status === 'pending') {
+      const sourceWasActive =
+        source.status === 'preparing' ||
+        source.orderItems.some((i) => i.status === 'ready' || i.status === 'served' || (i.sentToKitchen && i.status === 'pending'));
+      if (sourceWasActive && (target.status === 'pending' || target.status === 'served')) {
+        const cooking = source.orderItems.some((i) => i.status === 'pending' && i.sentToKitchen && !i.voidedAt);
         await tx.order.update({
           where: { id: targetOrderId },
-          data: { status: 'preparing' },
+          data: { status: cooking ? 'preparing' : target.status === 'pending' ? 'preparing' : target.status },
         });
       }
     });
 
+    this.ordersGateway.emitFloorChanged(cafeId);
     return this.findOne(cafeId, targetOrderId);
   }
 
-  /**
-   * Move an entire order to a different (free) table.
-   * The source table becomes free; the target table becomes occupied.
-   */
+  /** Move an entire order to a different (free) table. */
   async moveToTable(cafeId: number, orderId: number, targetTableId: number) {
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.order.findFirst({
-        where: { id: orderId, cafeId },
-      });
+    const moved = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({ where: { id: orderId, cafeId } });
       if (!order) throw new NotFoundException(`Order ${orderId} not found`);
 
-      const terminal = ['paid', 'cancelled'] as const;
-      if (terminal.includes(order.status as typeof terminal[number])) {
+      if (order.status === 'paid' || order.status === 'cancelled') {
         throw new BadRequestException('Cannot move a closed order');
       }
 
-      const targetTable = await tx.restaurantTable.findFirst({
-        where: { id: targetTableId, cafeId },
-      });
+      const targetTable = await tx.restaurantTable.findFirst({ where: { id: targetTableId, cafeId } });
       if (!targetTable) throw new NotFoundException(`Table ${targetTableId} not found`);
       if (targetTable.status !== 'free') {
         throw new BadRequestException(`Table ${targetTable.tableNumber} is not free`);
       }
 
-      // Free the old table, occupy the new one, update the order
-      await tx.restaurantTable.update({
-        where: { id: order.tableId },
-        data: { status: 'free' },
-      });
-      await tx.restaurantTable.update({
-        where: { id: targetTableId },
-        data: { status: 'occupied' },
-      });
-      await tx.order.update({
-        where: { id: orderId },
-        data: { tableId: targetTableId },
-      });
-
-      return this.findOne(cafeId, orderId);
+      await tx.restaurantTable.update({ where: { id: order.tableId }, data: { status: 'free' } });
+      await tx.restaurantTable.update({ where: { id: targetTableId }, data: { status: 'occupied' } });
+      await tx.order.update({ where: { id: orderId }, data: { tableId: targetTableId } });
+      return orderId;
     });
-  }
 
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return this.findOne(cafeId, moved);
+  }
 }

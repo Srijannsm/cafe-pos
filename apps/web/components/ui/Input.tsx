@@ -8,9 +8,9 @@ type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {
 };
 
 const FIELD_BASE =
-  "body-md min-h-12 w-full border border-border-subtle bg-surface-sunken text-ink-primary shadow-[inset_0_1px_2px_rgba(42,38,32,0.08)] outline-none placeholder:text-ink-faint focus:border-focus-ring focus:ring-2 focus:ring-focus-ring/30";
+  "body-md min-h-11 w-full border border-border-strong bg-surface-raised text-ink-primary shadow-sm outline-none placeholder:text-ink-faint focus:border-brand focus:ring-3 focus:ring-brand/15";
 
-const FIELD_ERROR = "border-status-error focus:border-status-error focus:ring-status-error/30";
+const FIELD_ERROR = "border-status-danger focus:border-status-danger focus:ring-status-danger/20";
 
 export function Input({ pill, label, error, helperText, className = "", id, ...props }: InputProps) {
   if (pill) {
@@ -26,7 +26,7 @@ export function Input({ pill, label, error, helperText, className = "", id, ...p
     <input
       {...props}
       id={id}
-      className={`${FIELD_BASE} rounded-sm px-3 ${error ? FIELD_ERROR : ""} ${className}`}
+      className={`${FIELD_BASE} rounded-lg px-3.5 ${error ? FIELD_ERROR : ""} ${className}`}
     />
   );
 

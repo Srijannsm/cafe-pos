@@ -8,7 +8,7 @@ type SelectProps = ComponentPropsWithoutRef<"select"> & {
 export function Select({ fullWidth, className = "", ...rest }: SelectProps) {
   return (
     <select
-      className={`min-h-12 rounded-sm border border-border-subtle bg-surface-sunken px-3 text-sm text-ink-primary outline-none focus:border-focus-ring focus:ring-2 focus:ring-focus-ring/30 ${fullWidth ? "w-full" : ""} ${className}`}
+      className={`min-h-11 rounded-lg border border-border-strong bg-surface-raised px-3 text-sm text-ink-primary shadow-sm outline-none focus:border-brand focus:ring-3 focus:ring-brand/15 ${fullWidth ? "w-full" : ""} ${className}`}
       {...rest}
     />
   );

@@ -53,6 +53,61 @@ enum PaymentMethod {
   fonepay_qr
 }
 
+// Which prep screen (KDS column / printed ticket) an item goes to. A cafe
+// with a hookah corner or a separate bar gets each station's tickets on its
+// own screen (/kitchen?station=bar) instead of one long mixed list.
+enum Station {
+  kitchen
+  bar
+  hookah
+}
+
+// Where an order came from -- lets reports split staff-taken vs QR orders.
+enum OrderSource {
+  staff
+  qr
+}
+
+enum DiscountType {
+  percent
+  flat
+}
+
+enum CashMovementType {
+  pay_in
+  pay_out
+  expense
+}
+
+// Inventory: what kind of thing a stock item is. Ingredients get used up by
+// recipes, consumables (hookah coils, foil, napkins) get used up by recipe
+// or a manual stock-out, assets (glasses, plates, cutlery) only ever leave
+// stock through breakage/loss.
+enum StockKind {
+  ingredient
+  consumable
+  asset
+}
+
+// Every change to a stock item's quantity is one of these. StockItem.currentQty
+// is just a cached running total of its movements -- the movements are the
+// real record (an append-only ledger, never edited or deleted).
+enum StockMovementType {
+  opening
+  purchase
+  sale
+  wastage
+  breakage
+  staff_use
+  adjustment
+  count
+}
+
+enum TableRequestType {
+  call_waiter
+  request_bill
+}
+
 // The tenant. Every cafe running on this deployment gets one row here, and
 // (almost) every other model hangs off a cafeId so one cafe's data is never
 // visible to another. `slug` is what identifies a cafe in the URL
@@ -107,6 +162,32 @@ model Cafe {
   logoUrl        String?
   themeColor     String?  // hex, e.g. "#e85d26"
 
+  // Branding / "vibe" -- shown on the QR menu and receipts. Everything else
+  // (spacing, type scale, status colours) stays system-controlled so every
+  // tenant still looks polished.
+  coverImageUrl  String?
+  tagline        String?
+  fontStyle      String   @default("modern") // modern | warm | playful
+  menuLayout     String   @default("grid")   // grid | list
+  phone          String?
+  address        String?
+  wifiName       String?
+  wifiPassword   String?
+  instagram      String?
+  facebook       String?
+  tiktok         String?
+  receiptFooter  String?
+
+  // Billing behaviour. Service charge defaults to 0 (see CLAUDE.md -- its
+  // legal status in Nepal is unsettled); pricesIncludeVat lets a VAT cafe
+  // print menu prices as-is and back-calculate VAT instead of adding on top.
+  serviceChargeRate Decimal @default(0)
+  pricesIncludeVat  Boolean @default(false)
+
+  // Feature toggles
+  inventoryEnabled Boolean @default(true)
+  gamesEnabled     Boolean @default(false)
+
   // Subscription
   plan               SubscriptionPlan    @default(starter)
   billingCycle       String              @default("monthly") // "monthly" | "yearly"
@@ -121,6 +202,14 @@ model Cafe {
   menuCategories MenuCategory[]
   menuItems      MenuItem[]
   orders         Order[]
+  shifts         Shift[]
+  cashMovements  CashMovement[]
+  stockItems     StockItem[]
+  suppliers      Supplier[]
+  purchases      Purchase[]
+  stockMovements StockMovement[]
+  auditLogs      AuditLog[]
+  tableRequests  TableRequest[]
 
   @@map("cafes")
 }
@@ -135,6 +224,8 @@ model User {
 
   cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
+  shiftsOpened Shift[] @relation("ShiftOpenedBy")
+  shiftsClosed Shift[] @relation("ShiftClosedBy")
 
   // A name only has to be unique within its own cafe -- "Sita" can work at
   // two different cafes on the same platform.
@@ -164,18 +255,28 @@ model RestaurantTable {
   mergedInto    RestaurantTable?  @relation("TableMerge", fields: [mergedIntoId], references: [id])
   mergedFrom    RestaurantTable[] @relation("TableMerge")
 
-  cafe   Cafe    @relation(fields: [cafeId], references: [id])
-  orders Order[]
+  cafe     Cafe           @relation(fields: [cafeId], references: [id])
+  orders   Order[]
+  requests TableRequest[]
 
   @@unique([cafeId, tableNumber])
   @@map("restaurant_tables")
 }
 
 model MenuCategory {
-  id        Int    @id @default(autoincrement())
+  id        Int     @id @default(autoincrement())
   cafeId    Int
   name      String
   sortOrder Int
+  isActive  Boolean @default(true)
+
+  // Sub-categories: a category with a parentId is a sub-category of that
+  // parent (Drinks -> Hot / Cold / Shakes). Kept to two levels on purpose
+  // (enforced in MenuService) -- deeper trees make the waiter screen slower,
+  // not faster.
+  parentId  Int?
+  parent    MenuCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children  MenuCategory[] @relation("CategoryTree")
 
   cafe      Cafe       @relation(fields: [cafeId], references: [id])
   menuItems MenuItem[]
@@ -192,6 +293,18 @@ model MenuItem {
   isAvailable Boolean  @default(true)
   categoryId  Int
 
+  description String?
+  imageUrl    String?
+  // Small fixed vocabulary (veg, nonveg, spicy, bestseller, new, vegan) --
+  // validated in the DTO rather than a DB enum so adding a tag later
+  // doesn't need a migration.
+  tags        String[] @default([])
+  station     Station  @default(kitchen)
+  sortOrder   Int      @default(0)
+  // Optional manual cost price, for a rough margin in reports until recipes
+  // (RecipeLine) carry the real ingredient cost.
+  costPrice   Decimal?
+
   // Inventory tracking is opt-in per item (trackStock) -- most cafe menu
   // items (drinks made to order, say) never run out in a way worth
   // tracking, so items default to untracked rather than forcing every
@@ -205,6 +318,7 @@ model MenuItem {
   category   MenuCategory @relation(fields: [categoryId], references: [id])
   modifiers  Modifier[]
   orderItems OrderItem[]
+  recipe     RecipeLine[]
 
   @@unique([cafeId, name])
   @@map("menu_items")
@@ -244,6 +358,19 @@ model Order {
   waiterId  Int?
   notes     String?
 
+  source    OrderSource @default(staff)
+
+  // Bill-level discount. discountAmount is the computed money value frozen
+  // at bill time; type/value are what the cashier entered.
+  discountType   DiscountType?
+  discountValue  Decimal?
+  discountAmount Decimal?
+  discountReason String?
+  serviceCharge  Decimal?
+  // How many times the bill was printed -- reprints say "COPY OF ORIGINAL".
+  printCount     Int     @default(0)
+  cancelReason   String?
+
   cafe       Cafe            @relation(fields: [cafeId], references: [id])
   table      RestaurantTable @relation(fields: [tableId], references: [id])
   waiter     User?           @relation(fields: [waiterId], references: [id])
@@ -261,6 +388,16 @@ model OrderItem {
   sentToKitchen   Boolean         @default(false)
   orderId         Int
   menuItemId      Int
+  note            String?
+  station         Station         @default(kitchen)
+  createdAt       DateTime        @default(now())
+
+  // Void (item removed after it reached the kitchen). The row is kept --
+  // never deleted -- so the kitchen sees the strike-through and the
+  // discounts & voids report can show who removed what and why.
+  voidedAt        DateTime?
+  voidReason      String?
+  voidedById      Int?
 
   // Scoped transitively through order, same reasoning as Modifier above.
   order              Order               @relation(fields: [orderId], references: [id])
@@ -288,9 +425,236 @@ model Payment {
   method  PaymentMethod
   paidAt  DateTime      @default(now())
   orderId Int
+  // A bill can be settled by several payments (Rs 500 cash + Rs 740 Fonepay).
+  reference    String?
+  receivedById Int?
+  shiftId      Int?
+  shift        Shift?   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
 
   // Scoped transitively through order, same reasoning as Modifier above.
   order Order @relation(fields: [orderId], references: [id])
 
   @@map("payments")
+}
+
+// ── Cash drawer ─────────────────────────────────────────────────────────
+// One open shift per cafe at a time. Close = count the drawer; the
+// difference against expected cash (opening + cash sales + pay-ins -
+// pay-outs/expenses) is frozen on the row.
+model Shift {
+  id           Int       @id @default(autoincrement())
+  cafeId       Int
+  openedById   Int
+  openedAt     DateTime  @default(now())
+  openingCash  Decimal
+  closedById   Int?
+  closedAt     DateTime?
+  expectedCash Decimal?
+  countedCash  Decimal?
+  difference   Decimal?
+  note         String?
+
+  cafe          Cafe           @relation(fields: [cafeId], references: [id])
+  openedBy      User           @relation("ShiftOpenedBy", fields: [openedById], references: [id])
+  closedBy      User?          @relation("ShiftClosedBy", fields: [closedById], references: [id])
+  payments      Payment[]
+  cashMovements CashMovement[]
+
+  @@index([cafeId, closedAt])
+  @@map("shifts")
+}
+
+// Money in/out of the drawer that isn't a sale. An `expense` is a pay-out
+// with a category (milk delivery, gas, staff snacks) -- that's what turns
+// petty cash into a simple expense report.
+model CashMovement {
+  id          Int              @id @default(autoincrement())
+  cafeId      Int
+  shiftId     Int?
+  type        CashMovementType
+  category    String?
+  amount      Decimal
+  note        String?
+  createdById Int?
+  createdAt   DateTime         @default(now())
+
+  cafe  Cafe   @relation(fields: [cafeId], references: [id])
+  shift Shift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([cafeId, createdAt])
+  @@map("cash_movements")
+}
+
+// ── Inventory ───────────────────────────────────────────────────────────
+model StockItem {
+  id                Int       @id @default(autoincrement())
+  cafeId            Int
+  name              String
+  kind              StockKind @default(ingredient)
+  unit              String    // g, kg, ml, L, pcs, pack ...
+  currentQty        Decimal   @default(0)
+  // Weighted average cost per unit, recalculated on every purchase.
+  avgCost           Decimal   @default(0)
+  lowStockThreshold Decimal   @default(0)
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+
+  cafe          Cafe            @relation(fields: [cafeId], references: [id])
+  movements     StockMovement[]
+  purchaseLines PurchaseLine[]
+  recipeLines   RecipeLine[]
+
+  @@unique([cafeId, name])
+  @@map("stock_items")
+}
+
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  cafeId    Int
+  name      String
+  phone     String?
+  panNumber String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  cafe      Cafe       @relation(fields: [cafeId], references: [id])
+  purchases Purchase[]
+
+  @@unique([cafeId, name])
+  @@map("suppliers")
+}
+
+model Purchase {
+  id          Int      @id @default(autoincrement())
+  cafeId      Int
+  supplierId  Int?
+  purchasedAt DateTime @default(now())
+  billRef     String?
+  total       Decimal
+  note        String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  cafe     Cafe           @relation(fields: [cafeId], references: [id])
+  supplier Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  lines    PurchaseLine[]
+
+  @@index([cafeId, purchasedAt])
+  @@map("purchases")
+}
+
+model PurchaseLine {
+  id          Int     @id @default(autoincrement())
+  purchaseId  Int
+  stockItemId Int
+  quantity    Decimal
+  unitCost    Decimal
+  lineTotal   Decimal
+
+  purchase  Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  stockItem StockItem @relation(fields: [stockItemId], references: [id])
+
+  @@map("purchase_lines")
+}
+
+model StockMovement {
+  id          Int               @id @default(autoincrement())
+  cafeId      Int
+  stockItemId Int
+  type        StockMovementType
+  // Signed: +10 for a purchase, -3 for breakage.
+  quantity    Decimal
+  unitCost    Decimal?
+  reason      String?
+  refType     String?           // "purchase" | "order" | "count"
+  refId       Int?
+  createdById Int?
+  createdAt   DateTime          @default(now())
+
+  cafe      Cafe      @relation(fields: [cafeId], references: [id])
+  stockItem StockItem @relation(fields: [stockItemId], references: [id])
+
+  @@index([cafeId, createdAt])
+  @@index([stockItemId, createdAt])
+  @@map("stock_movements")
+}
+
+// "One cappuccino uses 18 g beans + 150 ml milk". Optional -- when a menu
+// item has recipe lines, paying for it posts `sale` movements that deduct
+// the ingredients automatically.
+model RecipeLine {
+  id          Int     @id @default(autoincrement())
+  menuItemId  Int
+  stockItemId Int
+  quantity    Decimal
+
+  menuItem  MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  stockItem StockItem @relation(fields: [stockItemId], references: [id])
+
+  @@unique([menuItemId, stockItemId])
+  @@map("recipe_lines")
+}
+
+// ── Audit & floor signals ───────────────────────────────────────────────
+// Append-only record of money-sensitive actions (discounts, voids, cancels,
+// reopened bills, shift closes, stock corrections). Never updated or deleted.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  cafeId    Int
+  actorId   Int?
+  actorName String?
+  action    String
+  entity    String
+  entityId  Int?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  cafe Cafe @relation(fields: [cafeId], references: [id])
+
+  @@index([cafeId, createdAt])
+  @@map("audit_logs")
+}
+
+// "Call waiter" / "Request bill" taps from the QR page. Shows as a badge on
+// the floor view until a staff member resolves it.
+model TableRequest {
+  id           Int              @id @default(autoincrement())
+  cafeId       Int
+  tableId      Int
+  type         TableRequestType
+  createdAt    DateTime         @default(now())
+  resolvedAt   DateTime?
+  resolvedById Int?
+
+  cafe  Cafe            @relation(fields: [cafeId], references: [id])
+  table RestaurantTable @relation(fields: [tableId], references: [id])
+
+  @@index([cafeId, resolvedAt])
+  @@map("table_requests")
+}
+
+// ── Plans ───────────────────────────────────────────────────────────────
+// What each subscription plan includes, editable by the superadmin in
+// /platform/plans instead of being hardcoded. One row per plan key. A null
+// limit means "unlimited". A cafe on trial gets the `premium` row (trial =
+// "try everything"). Loaded into an in-memory cache by PlansService so the
+// permission checks in subscription/plan-limits.ts stay synchronous.
+model PlanConfig {
+  id           Int              @id @default(autoincrement())
+  key          SubscriptionPlan @unique
+  name         String
+  description  String?
+  monthlyPrice Decimal
+  // Yearly price = monthlyPrice * yearlyMonths ("pay 10, get 12").
+  yearlyMonths Int              @default(10)
+  maxStaff     Int?
+  maxMenuItems Int?
+  maxTables    Int?
+  qrOrdering   Boolean          @default(false)
+  reports      Boolean          @default(false)
+  inventory    Boolean          @default(false)
+  tableGame    Boolean          @default(false)
+  updatedAt    DateTime         @updatedAt
+
+  @@map("plan_configs")
 }

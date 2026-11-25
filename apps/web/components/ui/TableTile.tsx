@@ -1,4 +1,4 @@
-import { IconUsers } from "../icons";
+import { IconUsers, IconHand, IconReceipt, IconQrCode } from "../icons";
 
 type TableTileProps = {
   tableNumber: string;
@@ -6,231 +6,137 @@ type TableTileProps = {
   status: "free" | "occupied" | "reserved";
   activeOrderStatus?: string | null;
   onClick?: () => void;
-  /** Physical merge mode: this tile is the primary table */
+  /** Running total of the open order. */
+  total?: number;
+  /** When the order was opened -- shows "25m". */
+  startedAt?: string | null;
+  /** Items added (by a customer via QR or a waiter) but not sent to the kitchen yet. */
+  unsentCount?: number;
+  readyCount?: number;
+  isQrOrder?: boolean;
+  requests?: { type: "call_waiter" | "request_bill" }[];
   isPhysicalPrimary?: boolean;
-  /** Physical merge mode: this tile is a selected secondary */
   isPhysicalSelected?: boolean;
-  /** Physical merge mode: this tile can't participate (occupied/reserved) */
   isPhysicalDimmed?: boolean;
-  /** Transfer mode: this tile is the source */
   isTransferSource?: boolean;
-  /** Transfer mode: this tile is the destination */
   isTransferTarget?: boolean;
-  /** Transfer mode: this tile can't participate */
   isTransferDimmed?: boolean;
-  /**
-   * When set, this is a merged primary table. The value is the joined
-   * secondary table numbers, e.g. "2+3" — shown as "Table 1+2+3" in the label.
-   */
   mergedLabel?: string;
-  /** Called when the staff taps the Split chip (normal mode only). */
   onUnmerge?: () => void;
   unmergeLoading?: boolean;
 };
 
-const ORDER_STATUS_CONFIG: Record<string, {
-  borderColor: string;
-  bgColor: string;
-  chairColor: string;
-  badgeBg: string;
-  badgeText: string;
-  label: string;
-  icon: string;
-}> = {
-  pending: {
-    borderColor: "border-status-info",
-    bgColor: "bg-status-info-tint",
-    chairColor: "bg-status-info/30",
-    badgeBg: "bg-status-info",
-    badgeText: "text-white",
-    label: "Opened",
-    icon: "📋",
-  },
-  preparing: {
-    borderColor: "border-status-warning",
-    bgColor: "bg-status-warning-tint",
-    chairColor: "bg-status-warning/30",
-    badgeBg: "bg-status-warning",
-    badgeText: "text-on-brand",
-    label: "Kitchen",
-    icon: "🔥",
-  },
-  served: {
-    borderColor: "border-status-success",
-    bgColor: "bg-status-success-tint",
-    chairColor: "bg-status-success/30",
-    badgeBg: "bg-status-success",
-    badgeText: "text-white",
-    label: "Served",
-    icon: "✓",
-  },
-  billed: {
-    borderColor: "border-brand",
-    bgColor: "bg-brand-tint",
-    chairColor: "bg-brand/20",
-    badgeBg: "bg-brand",
-    badgeText: "text-white",
-    label: "Pay now",
-    icon: "💳",
-  },
+const STATUS: Record<string, { label: string; dot: string }> = {
+  pending: { label: "Ordering", dot: "bg-status-warning" },
+  preparing: { label: "In kitchen", dot: "bg-status-info" },
+  served: { label: "Served", dot: "bg-status-success" },
+  billed: { label: "Bill printed", dot: "bg-brand" },
 };
 
-function Chair({ className }: { className: string }) {
-  return <div className={`rounded-sm ${className}`} />;
+function minutes(since?: string | null) {
+  if (!since) return null;
+  const m = Math.floor((Date.now() - new Date(since).getTime()) / 60000);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+// A table card is read at a glance from across the room, so it carries
+// only what changes what the waiter does next: is it free, what's
+// happening, how long have they been here, and does anyone need me.
 export function TableTile({
-  tableNumber,
-  seats,
-  status,
-  activeOrderStatus,
-  onClick,
-  isPhysicalPrimary,
-  isPhysicalSelected,
-  isPhysicalDimmed,
-  isTransferSource,
-  isTransferTarget,
-  isTransferDimmed,
-  mergedLabel,
-  onUnmerge,
-  unmergeLoading,
+  tableNumber, seats, status, activeOrderStatus, onClick, total = 0, startedAt, unsentCount = 0, readyCount = 0,
+  isQrOrder, requests = [], isPhysicalPrimary, isPhysicalSelected, isPhysicalDimmed, isTransferSource,
+  isTransferTarget, isTransferDimmed, mergedLabel, onUnmerge, unmergeLoading,
 }: TableTileProps) {
-  const isOccupied = status === "occupied";
-  const isReserved = status === "reserved";
-  const orderCfg = isOccupied && activeOrderStatus ? ORDER_STATUS_CONFIG[activeOrderStatus] : null;
+  const occupied = status === "occupied";
+  const reserved = status === "reserved";
+  const dimmed = isPhysicalDimmed || isTransferDimmed;
+  const selected = isPhysicalPrimary || isTransferSource;
+  const target = isPhysicalSelected || isTransferTarget;
+  const calling = requests.some((r) => r.type === "call_waiter");
+  const wantsBill = requests.some((r) => r.type === "request_bill");
+  const cfg = occupied && activeOrderStatus ? STATUS[activeOrderStatus] : null;
+  const display = mergedLabel ? `${tableNumber}+${mergedLabel}` : tableNumber;
 
-  const isDimmed = isPhysicalDimmed || isTransferDimmed;
-
-  let borderClass: string;
-  let bgClass: string;
-  let chairColor: string;
-
-  if (isPhysicalPrimary) {
-    borderClass = "border-brand border-[3px]";
-    bgClass = "bg-brand-tint";
-    chairColor = "bg-brand/30";
-  } else if (isPhysicalSelected) {
-    borderClass = "border-status-success border-dashed border-[3px]";
-    bgClass = "bg-status-success-tint";
-    chairColor = "bg-status-success/25";
-  } else if (isTransferSource) {
-    borderClass = "border-brand border-[3px]";
-    bgClass = "bg-brand-tint";
-    chairColor = "bg-brand/30";
-  } else if (isTransferTarget) {
-    borderClass = "border-status-success border-dashed border-[3px]";
-    bgClass = "bg-status-success-tint";
-    chairColor = "bg-status-success/25";
-  } else if (isDimmed) {
-    borderClass = "border-border-subtle border-2";
-    bgClass = "bg-surface-sunken";
-    chairColor = "bg-border-subtle";
-  } else {
-    borderClass = isOccupied
-      ? (orderCfg?.borderColor ?? "border-status-warning")
-      : isReserved
-        ? "border-dashed border-status-info"
-        : "border-status-success/40";
-    bgClass = isOccupied
-      ? (orderCfg?.bgColor ?? "bg-status-warning-tint")
-      : isReserved
-        ? "bg-surface-raised"
-        : "bg-status-success-tint";
-    chairColor = isOccupied
-      ? (orderCfg?.chairColor ?? "bg-status-warning/30")
-      : isReserved
-        ? "bg-status-info/20"
-        : "bg-status-success/25";
-  }
-
-  const topSeats = Math.max(1, Math.floor(seats / 2));
-  const bottomSeats = Math.max(1, seats - topSeats);
-
-  const displayNumber = mergedLabel ? `${tableNumber}+${mergedLabel}` : tableNumber;
+  const ring = selected
+    ? "border-brand ring-4 ring-brand/15"
+    : target
+      ? "border-status-success border-dashed ring-4 ring-status-success/15"
+      : calling || wantsBill
+        ? "border-status-danger ring-4 ring-status-danger/15"
+        : occupied
+          ? "border-border-strong"
+          : "border-border-subtle";
 
   return (
-    // Using div+role instead of button to avoid nested <button> (the Split chip is a real button)
     <div
       role="button"
       tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(); } }}
-      className={`group relative flex flex-col items-center gap-1.5 focus:outline-none w-full cursor-pointer ${isDimmed ? "opacity-40 pointer-events-none" : ""}`}
-      aria-label={`Table ${displayNumber} — ${status}`}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
+      aria-label={`Table ${display} — ${status}`}
+      className={`group relative flex min-h-[132px] w-full cursor-pointer flex-col rounded-2xl border-2 p-4 text-left transition active:scale-[0.98] ${ring} ${
+        occupied ? "bg-surface-raised shadow-sm" : reserved ? "bg-surface-sunken" : "bg-surface-raised"
+      } ${dimmed ? "pointer-events-none opacity-35" : "hover:shadow-md"}`}
     >
-      {/* Top chairs */}
-      <div className="flex gap-1.5">
-        {Array.from({ length: Math.min(topSeats, 4) }).map((_, i) => (
-          <Chair key={i} className={`h-2 w-7 ${chairColor} rounded-t-md transition-colors`} />
-        ))}
-      </div>
-
-      {/* Table surface */}
-      <div
-        className={`relative flex flex-col justify-between w-full rounded-xl border-2 ${borderClass} ${bgClass} px-3 pt-3 pb-3 transition-all duration-150 group-active:scale-[0.97] group-hover:brightness-95`}
-        style={{ minHeight: "90px" }}
-      >
-        {/* Top row: table name + mode badge */}
-        <div className="flex items-start justify-between gap-2">
-          <p className={`heading-md font-bold leading-tight ${isPhysicalPrimary || isTransferSource ? "text-brand-strong" : "text-ink-primary"}`}>
-            Table {displayNumber}
-          </p>
-
-          {/* Mode badges (top-right) */}
-          {isPhysicalPrimary && (
-            <span className="shrink-0 rounded-pill bg-brand px-2 py-0.5 label-sm font-semibold text-white">Primary ✓</span>
-          )}
-          {isPhysicalSelected && (
-            <span className="shrink-0 rounded-pill bg-status-success px-2 py-0.5 label-sm font-semibold text-white">+ Adding</span>
-          )}
-          {isTransferSource && (
-            <span className="shrink-0 rounded-pill bg-brand px-2 py-0.5 label-sm font-semibold text-white">Move from</span>
-          )}
-          {isTransferTarget && (
-            <span className="shrink-0 rounded-pill bg-status-success px-2 py-0.5 label-sm font-semibold text-white">Move to →</span>
-          )}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className={`text-2xl font-semibold leading-none ${occupied ? "text-ink-primary" : "text-ink-secondary"}`}>{display}</p>
+          <p className="mt-1.5 flex items-center gap-1 text-xs text-ink-faint"><IconUsers className="h-3.5 w-3.5" />{seats}</p>
         </div>
-
-        {/* Bottom row: seats + status badge or FREE or Split */}
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex items-center gap-1 text-ink-faint">
-            <IconUsers className="h-3.5 w-3.5" />
-            <span className="label-sm">{seats} seats</span>
-          </div>
-
-          {/* Status badge */}
-          {!isPhysicalPrimary && !isPhysicalSelected && !isTransferSource && !isTransferTarget && isOccupied && orderCfg && (
-            <span className={`flex items-center gap-1 rounded-pill px-2 py-0.5 label-sm font-semibold ${orderCfg.badgeBg} ${orderCfg.badgeText}`}>
-              <span>{orderCfg.icon}</span>{orderCfg.label}
-            </span>
-          )}
-          {!isPhysicalPrimary && !isPhysicalSelected && !isTransferSource && !isTransferTarget && isReserved && (
-            <span className="rounded-pill bg-status-info px-2 py-0.5 label-sm font-semibold text-white">Reserved</span>
-          )}
-          {!isOccupied && !isReserved && !isPhysicalPrimary && !isPhysicalSelected && !isTransferSource && !isTransferTarget && (
-            <p className="label-sm text-status-success-ink font-semibold">FREE</p>
-          )}
-
-          {/* Split chip */}
-          {onUnmerge && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onUnmerge(); }}
-              disabled={unmergeLoading}
-              className="rounded-pill border border-border-strong bg-surface-base px-2 py-0.5 label-sm text-ink-secondary hover:bg-surface-raised transition disabled:opacity-50"
-            >
-              Split
-            </button>
-          )}
+        <div className="flex flex-col items-end gap-1">
+          {isPhysicalPrimary && <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-semibold text-on-brand">Main</span>}
+          {isPhysicalSelected && <span className="rounded-full bg-status-success px-2 py-0.5 text-[11px] font-semibold text-white">+ Join</span>}
+          {isTransferSource && <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-semibold text-on-brand">From</span>}
+          {isTransferTarget && <span className="rounded-full bg-status-success px-2 py-0.5 text-[11px] font-semibold text-white">To</span>}
+          {calling && <span className="flex animate-pulse items-center gap-1 rounded-full bg-status-danger px-2 py-0.5 text-[11px] font-semibold text-white"><IconHand className="h-3 w-3" />Calling</span>}
+          {wantsBill && <span className="flex items-center gap-1 rounded-full bg-status-danger px-2 py-0.5 text-[11px] font-semibold text-white"><IconReceipt className="h-3 w-3" />Bill</span>}
+          {occupied && minutes(startedAt) && <span className="tabular text-xs text-ink-faint">{minutes(startedAt)}</span>}
         </div>
       </div>
 
-      {/* Bottom chairs */}
-      <div className="flex gap-1.5">
-        {Array.from({ length: Math.min(bottomSeats, 4) }).map((_, i) => (
-          <Chair key={i} className={`h-2 w-7 ${chairColor} rounded-b-md transition-colors`} />
-        ))}
+      <div className="mt-auto pt-3">
+        {occupied ? (
+          <>
+            <p className="tabular text-base font-semibold text-ink-primary">Rs {total.toLocaleString("en-IN")}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {cfg && (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-ink-secondary">
+                  <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />{cfg.label}
+                </span>
+              )}
+              {unsentCount > 0 && (
+                <span className="flex items-center gap-1 rounded-full bg-status-warning-tint px-2 py-0.5 text-[11px] font-semibold text-status-warning-ink">
+                  {isQrOrder && <IconQrCode className="h-3 w-3" />}{unsentCount} to confirm
+                </span>
+              )}
+              {readyCount > 0 && <span className="rounded-full bg-status-success-tint px-2 py-0.5 text-[11px] font-semibold text-status-success-ink">{readyCount} ready</span>}
+            </div>
+          </>
+        ) : reserved ? (
+          <p className="text-xs font-medium text-ink-faint">Reserved</p>
+        ) : (
+          <p className="text-xs font-medium text-status-success-ink">Free · tap to start</p>
+        )}
       </div>
+
+      {onUnmerge && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onUnmerge();
+          }}
+          disabled={unmergeLoading}
+          className="absolute bottom-3 right-3 rounded-full border border-border-strong bg-surface-raised px-2.5 py-0.5 text-xs text-ink-secondary transition hover:bg-surface-sunken disabled:opacity-50"
+        >
+          Split
+        </button>
+      )}
     </div>
   );
 }

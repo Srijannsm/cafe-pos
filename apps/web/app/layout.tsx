@@ -1,24 +1,29 @@
 import type { Metadata, Viewport } from "next";
-import { Manrope, Public_Sans, IBM_Plex_Mono } from "next/font/google";
+import { Outfit, Fraunces, Poppins } from "next/font/google";
 import "./globals.css";
 import { CafeSettingsProvider } from "../lib/CafeSettingsContext";
 
-const manrope = Manrope({
+// Outfit is the app font (same as Aaramva Shikshya). Fraunces / Poppins are
+// only used for headings on customer-facing screens when a cafe picks the
+// "warm" or "playful" vibe, so they aren't preloaded.
+const outfit = Outfit({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-outfit",
+});
+
+const fraunces = Fraunces({
   subsets: ["latin"],
   weight: ["600", "700"],
-  variable: "--font-manrope",
+  variable: "--font-fraunces",
+  preload: false,
 });
 
-const publicSans = Public_Sans({
+const poppins = Poppins({
   subsets: ["latin"],
-  weight: ["400", "600"],
-  variable: "--font-public-sans",
-});
-
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["600"],
-  variable: "--font-plex-mono",
+  weight: ["600", "700"],
+  variable: "--font-poppins",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -42,7 +47,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#616b57",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
 };
@@ -53,7 +58,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${manrope.variable} ${publicSans.variable} ${plexMono.variable}`}>
+    <html lang="en" className={`${outfit.variable} ${fraunces.variable} ${poppins.variable}`}>
       <body>
         <CafeSettingsProvider>
           {children}

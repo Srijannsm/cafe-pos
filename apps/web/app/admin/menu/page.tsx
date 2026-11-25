@@ -1,747 +1,677 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetchJson } from "../../../lib/api";
 import { useToast } from "../../../components/Toast";
-import { IconPlus, IconClipboardList, IconEdit, IconCheck, IconX, IconTrash, IconChevronRight } from "../../../components/icons";
-import { SectionCard } from "../_components/SectionCard";
-import { Input } from "../../../components/ui/Input";
-import { Button } from "../../../components/ui/Button";
-import { StatusBadge } from "../../../components/ui/StatusBadge";
-import { Skeleton } from "../../../components/ui/Skeleton";
-import { EmptyState } from "../../../components/ui/EmptyState";
-import { ErrorState } from "../../../components/ui/ErrorState";
-import { ConfirmDialog } from "../../../components/ui/ConfirmDialog";
+import { useCafeSettings } from "../../../lib/CafeSettingsContext";
 import { PageHeader } from "../../../components/ui/PageHeader";
-import { Select } from "../../../components/ui/Select";
-import { Tabs } from "../../../components/ui/Tabs";
+import { Button } from "../../../components/ui/Button";
+import { Drawer } from "../../../components/ui/Drawer";
+import { Switch } from "../../../components/ui/Switch";
+import { Field, Panel, Pill, inputClass } from "../../../components/ui/Field";
+import { ConfirmDialog } from "../../../components/ui/ConfirmDialog";
+import { EmptyState } from "../../../components/ui/EmptyState";
+import { Skeleton } from "../../../components/ui/Skeleton";
+import {
+  IconPlus, IconSearch, IconImage, IconTrash, IconGrip, IconEdit, IconUpload, IconX, IconClipboardList,
+} from "../../../components/icons";
+import { assetUrl, rs } from "../../../lib/format";
+import { uploadImage } from "../../../lib/upload";
+import {
+  type AdminMenuItem, type Category, type Station, STATIONS, TAGS, orderedCategories,
+} from "../../../lib/menu-types";
 
-type Category = {
-  id: number;
-  name: string;
-  sortOrder: number;
-};
+type StockItem = { id: number; name: string; unit: string; avgCost: string; isActive: boolean };
 
-type Modifier = {
-  id: number;
-  name: string;
-  priceDelta: string;
-};
-
-type MenuItem = {
-  id: number;
+type Draft = {
+  id?: number;
   name: string;
   price: string;
+  categoryId: number | "";
+  description: string;
+  imageUrl: string | null;
+  tags: string[];
+  station: Station;
+  costPrice: string;
   isAvailable: boolean;
-  categoryId: number;
-  category: Category;
-  modifiers: Modifier[];
   trackStock: boolean;
-  stockQuantity: number;
-  lowStockThreshold: number;
+  stockQuantity: string;
+  lowStockThreshold: string;
 };
 
-export default function MenuManagementPage() {
+const EMPTY: Draft = {
+  name: "", price: "", categoryId: "", description: "", imageUrl: null, tags: [], station: "kitchen",
+  costPrice: "", isAvailable: true, trackStock: false, stockQuantity: "0", lowStockThreshold: "5",
+};
+
+export default function MenuItemsPage() {
   const { showToast, toastHost } = useToast();
-
+  const { settings } = useCafeSettings();
+  const [items, setItems] = useState<AdminMenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [items, setItems] = useState<MenuItem[]>([]);
+  const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState<number | "all">("all");
+  const [availFilter, setAvailFilter] = useState<"all" | "available" | "soldout">("all");
+  const [editing, setEditing] = useState<AdminMenuItem | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [deleting, setDeleting] = useState<AdminMenuItem | null>(null);
+  const dragId = useRef<number | null>(null);
 
-  const [nameDrafts, setNameDrafts] = useState<Record<number, string>>({});
-  const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
-  const [categoryDrafts, setCategoryDrafts] = useState<Record<number, string>>({});
-  const [editingItemId, setEditingItemId] = useState<number | null>(null);
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
-
-  const [modifierNameDrafts, setModifierNameDrafts] = useState<Record<number, string>>({});
-  const [modifierPriceDeltaDrafts, setModifierPriceDeltaDrafts] = useState<Record<number, string>>({});
-  const [editingModifierId, setEditingModifierId] = useState<number | null>(null);
-
-  const [itemSearch, setItemSearch] = useState("");
-  const [restockDrafts, setRestockDrafts] = useState<Record<number, string>>({});
-  const [deletingModifier, setDeletingModifier] = useState<Modifier | null>(null);
-
-  const [activeTab, setActiveTab] = useState<"category" | "item" | "modifier">("category");
-
-  const [categoryName, setCategoryName] = useState("");
-  const [categorySortOrder, setCategorySortOrder] = useState("");
-  const [savingCategory, setSavingCategory] = useState(false);
-
-  const [itemName, setItemName] = useState("");
-  const [itemPrice, setItemPrice] = useState("");
-  const [itemCategoryId, setItemCategoryId] = useState("");
-  const [savingItem, setSavingItem] = useState(false);
-
-  const [modifierItemId, setModifierItemId] = useState("");
-  const [modifierName, setModifierName] = useState("");
-  const [modifierPriceDelta, setModifierPriceDelta] = useState("");
-  const [savingModifier, setSavingModifier] = useState(false);
-
-  const refreshAll = useCallback(async () => {
-    const [categoriesRes, itemsRes] = await Promise.all([
-      apiFetchJson<Category[]>("/menu/categories"),
-      apiFetchJson<MenuItem[]>("/menu/all"),
-    ]);
-    setCategories(categoriesRes);
-    setItems(itemsRes);
-    setNameDrafts(Object.fromEntries(itemsRes.map((item) => [item.id, item.name])));
-    setPriceDrafts(Object.fromEntries(itemsRes.map((item) => [item.id, item.price])));
-    setCategoryDrafts(Object.fromEntries(itemsRes.map((item) => [item.id, String(item.categoryId)])));
-    const allModifiers = itemsRes.flatMap((item) => item.modifiers);
-    setModifierNameDrafts(Object.fromEntries(allModifiers.map((m) => [m.id, m.name])));
-    setModifierPriceDeltaDrafts(Object.fromEntries(allModifiers.map((m) => [m.id, m.priceDelta])));
-  }, []);
+  const load = useCallback(async () => {
+    try {
+      const [m, c] = await Promise.all([
+        apiFetchJson<AdminMenuItem[]>("/menu/all"),
+        apiFetchJson<Category[]>("/menu/categories"),
+      ]);
+      setItems(m);
+      setCategories(c);
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
 
   useEffect(() => {
-    refreshAll()
-      .then(() => setLoadError(false))
-      .catch(() => setLoadError(true))
-      .finally(() => setLoading(false));
-  }, [refreshAll]);
+    load();
+    apiFetchJson<StockItem[]>("/inventory/items").then(setStockItems).catch(() => {});
+  }, [load]);
 
-  async function handleAddCategory(e: React.FormEvent) {
-    e.preventDefault();
-    setSavingCategory(true);
-    try {
-      await apiFetchJson("/menu/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: categoryName, sortOrder: Number(categorySortOrder) }),
-      });
-      setCategoryName("");
-      setCategorySortOrder("");
-      await refreshAll();
-      showToast(`Category "${categoryName}" added`);
-    } catch {
-      showToast("Could not add that category", "error");
-    } finally {
-      setSavingCategory(false);
-    }
-  }
+  const cats = useMemo(() => orderedCategories(categories), [categories]);
+  const catPath = (id: number) => cats.find((c) => c.id === id)?.path ?? "—";
 
-  async function handleAddItem(e: React.FormEvent) {
-    e.preventDefault();
-    setSavingItem(true);
-    try {
-      await apiFetchJson("/menu", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: itemName,
-          price: Number(itemPrice),
-          categoryId: Number(itemCategoryId),
-        }),
-      });
-      setItemName("");
-      setItemPrice("");
-      setItemCategoryId("");
-      await refreshAll();
-      showToast(`"${itemName}" added to the menu`);
-    } catch {
-      showToast("Could not add that item", "error");
-    } finally {
-      setSavingItem(false);
-    }
-  }
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const inCat = (i: AdminMenuItem) =>
+      catFilter === "all" || i.categoryId === catFilter || i.category.parentId === catFilter;
+    return items
+      .filter(inCat)
+      .filter((i) => availFilter === "all" || (availFilter === "available" ? i.isAvailable : !i.isAvailable))
+      .filter((i) => !q || i.name.toLowerCase().includes(q) || i.description?.toLowerCase().includes(q));
+  }, [items, search, catFilter, availFilter]);
 
-  async function handleUpdateItem(
-    item: MenuItem,
-    data: { name: string; price: number; categoryId: number } | { isAvailable: boolean },
-  ) {
+  // Reordering only makes sense inside one category with no search applied.
+  const canReorder = catFilter !== "all" && !search && availFilter === "all";
+
+  async function toggleAvailable(item: AdminMenuItem, next: boolean) {
+    setItems((list) => list.map((i) => (i.id === item.id ? { ...i, isAvailable: next } : i))); // optimistic
     try {
       await apiFetchJson(`/menu/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ isAvailable: next }),
       });
-      await refreshAll();
-      if ("isAvailable" in data) {
-        showToast(
-          data.isAvailable ? `"${item.name}" is visible on the menu again` : `"${item.name}" is now hidden from the menu`,
-        );
-      } else {
-        showToast(`Details updated for "${data.name}"`);
-      }
-    } catch {
-      showToast(`Could not update "${item.name}"`, "error");
+      showToast(next ? `${item.name} is back on the menu` : `${item.name} marked sold out`);
+    } catch (e) {
+      setItems((list) => list.map((i) => (i.id === item.id ? { ...i, isAvailable: !next } : i)));
+      showToast((e as Error).message, "error");
     }
   }
 
-  async function handleToggleTrackStock(item: MenuItem) {
-    try {
-      await apiFetchJson(`/menu/${item.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackStock: !item.trackStock }),
-      });
-      await refreshAll();
-      showToast(
-        item.trackStock ? `Stock tracking off for "${item.name}"` : `Now tracking stock for "${item.name}"`,
+  async function onDrop(targetId: number) {
+    const from = dragId.current;
+    dragId.current = null;
+    if (from == null || from === targetId) return;
+    const ids = filtered.map((i) => i.id);
+    const fromIdx = ids.indexOf(from);
+    const toIdx = ids.indexOf(targetId);
+    ids.splice(toIdx, 0, ids.splice(fromIdx, 1)[0]!);
+    setItems((list) => {
+      const order = new Map(ids.map((id, i) => [id, i]));
+      return [...list].map((i) => (order.has(i.id) ? { ...i, sortOrder: order.get(i.id)! } : i)).sort((a, b) =>
+        a.category.sortOrder - b.category.sortOrder || a.sortOrder - b.sortOrder,
       );
-    } catch {
-      showToast(`Could not update "${item.name}"`, "error");
+    });
+    try {
+      await apiFetchJson("/menu/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "item", ids }),
+      });
+    } catch (e) {
+      showToast((e as Error).message, "error");
+      load();
     }
   }
 
-  async function handleRestock(item: MenuItem) {
-    const delta = Number(restockDrafts[item.id]);
-    if (!delta) return;
+  async function confirmDelete() {
+    if (!deleting) return;
+    try {
+      const res = await apiFetchJson<{ archived: boolean }>(`/menu/${deleting.id}`, { method: "DELETE" });
+      showToast(res.archived ? `${deleting.name} has past sales, so it was hidden instead` : `${deleting.name} deleted`);
+      setDeleting(null);
+      load();
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    }
+  }
+
+  const soldOut = items.filter((i) => !i.isAvailable).length;
+
+  return (
+    <div>
+      {toastHost}
+      <PageHeader
+        title="Menu items"
+        description={`${items.length} items · ${soldOut} sold out`}
+        actions={
+          <Button
+            icon={<IconPlus />}
+            onClick={() => {
+              setEditing(null);
+              setDrawerOpen(true);
+            }}
+            disabled={categories.length === 0}
+          >
+            Add item
+          </Button>
+        }
+      />
+
+      {!loading && categories.length === 0 && (
+        <Panel className="mb-6">
+          <EmptyState
+            icon={<IconClipboardList className="h-6 w-6" />}
+            title="Start with a category"
+            description="Items live inside categories like Coffee, Momo or Hookah. Create one first."
+            action={<a href="/admin/menu/categories"><Button>Create categories</Button></a>}
+          />
+        </Panel>
+      )}
+
+      <Panel padded={false}>
+        <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle p-4">
+          <div className="relative min-w-[200px] flex-1">
+            <IconSearch className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search items…"
+              className={`${inputClass} w-full pl-10`}
+            />
+          </div>
+          <select
+            value={catFilter}
+            onChange={(e) => setCatFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+            className={`${inputClass} w-auto min-w-[180px]`}
+            aria-label="Category"
+          >
+            <option value="all">All categories</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.depth ? "— " : ""}{c.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={availFilter}
+            onChange={(e) => setAvailFilter(e.target.value as typeof availFilter)}
+            className={`${inputClass} w-auto`}
+            aria-label="Availability"
+          >
+            <option value="all">Any status</option>
+            <option value="available">Available</option>
+            <option value="soldout">Sold out</option>
+          </select>
+        </div>
+
+        {loading ? (
+          <div className="space-y-3 p-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-xl" />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState title="No items match" description="Try another search or category." className="py-14" />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border-subtle text-left text-xs font-medium uppercase tracking-wide text-ink-faint">
+                  <th className="w-8 px-2 py-3" />
+                  <th className="px-3 py-3">Item</th>
+                  <th className="hidden px-3 py-3 md:table-cell">Category</th>
+                  <th className="hidden px-3 py-3 lg:table-cell">Station</th>
+                  <th className="px-3 py-3 text-right">Price</th>
+                  <th className="px-3 py-3 text-center">Available</th>
+                  <th className="w-24 px-3 py-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item) => {
+                  const img = assetUrl(item.imageUrl);
+                  const low = item.trackStock && item.stockQuantity <= item.lowStockThreshold;
+                  return (
+                    <tr
+                      key={item.id}
+                      draggable={canReorder}
+                      onDragStart={() => (dragId.current = item.id)}
+                      onDragOver={(e) => canReorder && e.preventDefault()}
+                      onDrop={() => canReorder && onDrop(item.id)}
+                      onClick={() => {
+                        setEditing(item);
+                        setDrawerOpen(true);
+                      }}
+                      className={`cursor-pointer border-b border-border-subtle last:border-0 transition hover:bg-surface-canvas ${item.isAvailable ? "" : "opacity-60"}`}
+                    >
+                      <td className="px-2 py-3 text-ink-faint">
+                        {canReorder && <IconGrip className="h-4 w-4 cursor-grab" />}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          {img ? (
+                            <img src={img} alt="" width={44} height={33} loading="lazy" className="h-[33px] w-11 shrink-0 rounded-md object-cover" />
+                          ) : (
+                            <span className="flex h-[33px] w-11 shrink-0 items-center justify-center rounded-md bg-surface-sunken text-ink-faint">
+                              <IconImage className="h-4 w-4" />
+                            </span>
+                          )}
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-1.5 font-medium text-ink-primary">
+                              <span className="truncate">{item.name}</span>
+                              {item.tags.map((t) => (
+                                <span key={t} title={TAGS.find((x) => x.value === t)?.label} className="text-xs">
+                                  {TAGS.find((x) => x.value === t)?.emoji}
+                                </span>
+                              ))}
+                            </p>
+                            <p className="truncate text-xs text-ink-faint">
+                              {item.description || (item.modifiers.length ? `${item.modifiers.length} options` : "No description")}
+                              {item.trackStock && (
+                                <span className={low ? "ml-2 font-medium text-status-warning-ink" : "ml-2"}>· {item.stockQuantity} left</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="hidden px-3 py-3 text-ink-secondary md:table-cell">{catPath(item.categoryId)}</td>
+                      <td className="hidden px-3 py-3 capitalize text-ink-secondary lg:table-cell">{item.station}</td>
+                      <td className="tabular px-3 py-3 text-right font-medium text-ink-primary">{rs(item.price)}</td>
+                      <td className="px-3 py-3 text-center">
+                        <div className="inline-flex" onClick={(e) => e.stopPropagation()}>
+                          <Switch size="sm" checked={item.isAvailable} onChange={(v) => toggleAvailable(item, v)} label={`${item.name} available`} />
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button type="button" aria-label="Edit" className="rounded-lg p-2 text-ink-faint hover:bg-surface-sunken hover:text-ink-primary" onClick={() => { setEditing(item); setDrawerOpen(true); }}>
+                            <IconEdit className="h-4 w-4" />
+                          </button>
+                          <button type="button" aria-label="Delete" className="rounded-lg p-2 text-ink-faint hover:bg-status-danger-tint hover:text-status-danger-ink" onClick={() => setDeleting(item)}>
+                            <IconTrash className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!canReorder && catFilter === "all" && (
+              <p className="border-t border-border-subtle px-4 py-3 text-xs text-ink-faint">
+                Tip: pick a category to drag items into the order waiters and customers see.
+              </p>
+            )}
+          </div>
+        )}
+      </Panel>
+
+      <ItemDrawer
+        open={drawerOpen}
+        item={editing}
+        categories={cats}
+        stockItems={stockItems}
+        inventoryOn={settings?.inventoryEnabled !== false}
+        onClose={() => setDrawerOpen(false)}
+        onSaved={(msg) => {
+          showToast(msg);
+          setDrawerOpen(false);
+          load();
+        }}
+        onError={(m) => showToast(m, "error")}
+        defaultCategoryId={catFilter === "all" ? undefined : catFilter}
+      />
+
+      <ConfirmDialog
+        open={!!deleting}
+        title={`Delete ${deleting?.name ?? "item"}?`}
+        description="If it was ever sold it will be hidden instead, so old bills stay correct."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleting(null)}
+      />
+    </div>
+  );
+}
+
+function ItemDrawer({
+  open, item, categories, stockItems, inventoryOn, onClose, onSaved, onError, defaultCategoryId,
+}: {
+  open: boolean;
+  item: AdminMenuItem | null;
+  categories: (Category & { depth: number; path: string })[];
+  stockItems: StockItem[];
+  inventoryOn: boolean;
+  onClose: () => void;
+  onSaved: (msg: string) => void;
+  onError: (msg: string) => void;
+  defaultCategoryId?: number;
+}) {
+  const [d, setD] = useState<Draft>(EMPTY);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [modifiers, setModifiers] = useState<{ id?: number; name: string; priceDelta: string }[]>([]);
+  const [removedMods, setRemovedMods] = useState<number[]>([]);
+  const [recipe, setRecipe] = useState<{ stockItemId: number | ""; quantity: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    if (item) {
+      setD({
+        id: item.id, name: item.name, price: item.price, categoryId: item.categoryId,
+        description: item.description ?? "", imageUrl: item.imageUrl, tags: item.tags ?? [], station: item.station,
+        costPrice: item.costPrice ?? "", isAvailable: item.isAvailable, trackStock: item.trackStock,
+        stockQuantity: String(item.stockQuantity), lowStockThreshold: String(item.lowStockThreshold),
+      });
+      setModifiers(item.modifiers.map((m) => ({ id: m.id, name: m.name, priceDelta: String(Number(m.priceDelta)) })));
+      setRecipe((item.recipe ?? []).map((r) => ({ stockItemId: r.stockItemId, quantity: String(Number(r.quantity)) })));
+    } else {
+      setD({ ...EMPTY, categoryId: defaultCategoryId ?? categories[0]?.id ?? "" });
+      setModifiers([]);
+      setRecipe([]);
+    }
+    setRemovedMods([]);
+  }, [open, item, defaultCategoryId, categories]);
+
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+
+  async function onPickFile(file: File | undefined) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file, "menu", 4 / 3, 1200);
+      set("imageUrl", url);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  const recipeCost = recipe.reduce((sum, r) => {
+    const s = stockItems.find((x) => x.id === r.stockItemId);
+    return sum + (s ? Number(s.avgCost) * Number(r.quantity || 0) : 0);
+  }, 0);
+  const effectiveCost = recipeCost > 0 ? recipeCost : Number(d.costPrice || 0);
+  const margin = Number(d.price) > 0 && effectiveCost > 0 ? ((Number(d.price) - effectiveCost) / Number(d.price)) * 100 : null;
+
+  async function save() {
+    if (!d.name.trim() || !d.price || !d.categoryId) {
+      onError("Name, price and category are required");
+      return;
+    }
+    setSaving(true);
+    const body = {
+      name: d.name.trim(),
+      price: Number(d.price),
+      categoryId: Number(d.categoryId),
+      description: d.description.trim(),
+      imageUrl: d.imageUrl ?? undefined,
+      tags: d.tags,
+      station: d.station,
+      costPrice: d.costPrice === "" ? undefined : Number(d.costPrice),
+      isAvailable: d.isAvailable,
+      trackStock: d.trackStock,
+      stockQuantity: d.trackStock && !d.id ? Number(d.stockQuantity || 0) : undefined,
+      lowStockThreshold: Number(d.lowStockThreshold || 0),
+    };
+    const json = { "Content-Type": "application/json" };
+    try {
+      const saved = await apiFetchJson<AdminMenuItem>(d.id ? `/menu/${d.id}` : "/menu", {
+        method: d.id ? "PATCH" : "POST",
+        headers: json,
+        body: JSON.stringify(d.id ? body : { ...body, imageUrl: d.imageUrl ?? undefined }),
+      });
+      if (d.id && d.imageUrl === null && item?.imageUrl) {
+        await apiFetchJson(`/menu/${d.id}`, { method: "PATCH", headers: json, body: JSON.stringify({ imageUrl: null }) }).catch(() => {});
+      }
+      // Options: delete removed, update changed, add new.
+      for (const id of removedMods) await apiFetchJson(`/menu/modifiers/${id}`, { method: "DELETE" });
+      for (const m of modifiers) {
+        if (!m.name.trim()) continue;
+        const payload = JSON.stringify({ name: m.name.trim(), priceDelta: Number(m.priceDelta || 0) });
+        if (m.id) {
+          const orig = item?.modifiers.find((x) => x.id === m.id);
+          if (orig && (orig.name !== m.name.trim() || Number(orig.priceDelta) !== Number(m.priceDelta || 0))) {
+            await apiFetchJson(`/menu/modifiers/${m.id}`, { method: "PATCH", headers: json, body: payload });
+          }
+        } else {
+          await apiFetchJson(`/menu/${saved.id}/modifiers`, { method: "POST", headers: json, body: payload });
+        }
+      }
+      if (inventoryOn) {
+        const lines = recipe.filter((r) => r.stockItemId && Number(r.quantity) > 0).map((r) => ({ stockItemId: Number(r.stockItemId), quantity: Number(r.quantity) }));
+        const before = item?.recipe?.length ?? 0;
+        if (lines.length || before) {
+          await apiFetchJson(`/menu/${saved.id}/recipe`, { method: "PATCH", headers: json, body: JSON.stringify({ lines }) });
+        }
+      }
+      onSaved(d.id ? "Item updated" : "Item added");
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const img = assetUrl(d.imageUrl);
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={item ? "Edit item" : "New item"}
+      subtitle={item ? item.name : "Shows on the waiter app and the QR menu"}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} loading={saving} disabled={uploading}>{item ? "Save changes" : "Add item"}</Button>
+        </>
+      }
+    >
+      <div className="space-y-6">
+        {/* Photo */}
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-ink-primary">Photo</p>
+          <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl border border-dashed border-border-strong bg-surface-canvas">
+            {img ? (
+              <>
+                <img src={img} alt="" className="h-full w-full object-cover" />
+                <div className="absolute right-2 top-2 flex gap-2">
+                  <button type="button" onClick={() => fileRef.current?.click()} className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-medium text-ink-primary shadow-sm">Replace</button>
+                  <button type="button" onClick={() => set("imageUrl", null)} aria-label="Remove photo" className="rounded-lg bg-white/90 p-1.5 text-ink-primary shadow-sm"><IconX className="h-4 w-4" /></button>
+                </div>
+              </>
+            ) : (
+              <button type="button" onClick={() => fileRef.current?.click()} className="flex h-full w-full flex-col items-center justify-center gap-2 text-ink-secondary">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-raised shadow-sm"><IconUpload className="h-5 w-5" /></span>
+                <span className="text-sm font-medium">{uploading ? "Uploading…" : "Upload a photo"}</span>
+                <span className="text-xs text-ink-faint">Cropped to 4:3 and compressed automatically</span>
+              </button>
+            )}
+            {uploading && img && <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-sm font-medium">Uploading…</div>}
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onPickFile(e.target.files?.[0])} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Name" className="col-span-2">
+            <input className={`${inputClass} w-full`} value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Iced Americano" maxLength={80} />
+          </Field>
+          <Field label="Price (Rs)">
+            <input className={`${inputClass} w-full tabular`} inputMode="decimal" value={d.price} onChange={(e) => set("price", e.target.value.replace(/[^\d.]/g, ""))} placeholder="250" />
+          </Field>
+          <Field label="Category">
+            <select className={`${inputClass} w-full`} value={d.categoryId} onChange={(e) => set("categoryId", Number(e.target.value))}>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.depth ? `${c.path}` : c.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Description" hint={`${d.description.length}/200 · shown on the QR menu`} className="col-span-2">
+            <textarea className={`${inputClass} w-full min-h-20 py-2.5`} value={d.description} maxLength={200} onChange={(e) => set("description", e.target.value)} placeholder="Double shot over ice, with a hint of caramel" />
+          </Field>
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-ink-primary">Prepared at</p>
+          <div className="inline-flex rounded-lg bg-surface-sunken p-0.5">
+            {STATIONS.map((s) => (
+              <button key={s.value} type="button" onClick={() => set("station", s.value)} className={`rounded-md px-4 py-2 text-sm font-medium transition ${d.station === s.value ? "bg-surface-raised text-ink-primary shadow-sm" : "text-ink-secondary"}`}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ink-faint">Decides which kitchen screen shows this item.</p>
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-ink-primary">Tags</p>
+          <div className="flex flex-wrap gap-2">
+            {TAGS.map((t) => {
+              const on = d.tags.includes(t.value);
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => set("tags", on ? d.tags.filter((x) => x !== t.value) : d.tags.length < 4 ? [...d.tags, t.value] : d.tags)}
+                  className={`rounded-full border px-3 py-1.5 text-sm transition ${on ? "border-brand bg-brand-tint text-brand-strong" : "border-border-subtle text-ink-secondary hover:border-border-strong"}`}
+                >
+                  {t.emoji} {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Options */}
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-ink-primary">Options</p>
+              <p className="text-xs text-ink-faint">Extra shot, oat milk, large size… Use 0 for free options, negative for cheaper.</p>
+            </div>
+            <Button size="small" variant="secondary" icon={<IconPlus />} onClick={() => setModifiers((m) => [...m, { name: "", priceDelta: "0" }])}>Add</Button>
+          </div>
+          <div className="space-y-2">
+            {modifiers.map((m, i) => (
+              <div key={m.id ?? `new-${i}`} className="flex gap-2">
+                <input className={`${inputClass} w-full`} value={m.name} placeholder="Option name" onChange={(e) => setModifiers((l) => l.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                <input className={`${inputClass} tabular w-28`} inputMode="decimal" value={m.priceDelta} onChange={(e) => setModifiers((l) => l.map((x, j) => (j === i ? { ...x, priceDelta: e.target.value.replace(/[^\d.-]/g, "") } : x)))} aria-label="Extra price" />
+                <button type="button" aria-label="Remove option" className="rounded-lg px-2 text-ink-faint hover:text-status-danger-ink" onClick={() => {
+                  if (m.id) setRemovedMods((r) => [...r, m.id!]);
+                  setModifiers((l) => l.filter((_, j) => j !== i));
+                }}>
+                  <IconTrash className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Cost & recipe */}
+        <div className="rounded-xl border border-border-subtle p-4">
+          <p className="text-sm font-medium text-ink-primary">Cost & margin</p>
+          <p className="mb-3 text-xs text-ink-faint">Optional. Powers the profit report.</p>
+          {inventoryOn && stockItems.length > 0 && (
+            <div className="mb-3 space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">Recipe — deducted from stock when paid</p>
+              {recipe.map((r, i) => {
+                const s = stockItems.find((x) => x.id === r.stockItemId);
+                return (
+                  <div key={i} className="flex gap-2">
+                    <select className={`${inputClass} w-full`} value={r.stockItemId} onChange={(e) => setRecipe((l) => l.map((x, j) => (j === i ? { ...x, stockItemId: Number(e.target.value) } : x)))}>
+                      <option value="">Choose stock item</option>
+                      {stockItems.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.name} ({x.unit})</option>)}
+                    </select>
+                    <input className={`${inputClass} tabular w-24`} inputMode="decimal" placeholder="Qty" value={r.quantity} onChange={(e) => setRecipe((l) => l.map((x, j) => (j === i ? { ...x, quantity: e.target.value.replace(/[^\d.]/g, "") } : x)))} />
+                    <span className="flex w-10 items-center text-xs text-ink-faint">{s?.unit}</span>
+                    <button type="button" aria-label="Remove" className="px-1 text-ink-faint hover:text-status-danger-ink" onClick={() => setRecipe((l) => l.filter((_, j) => j !== i))}><IconTrash className="h-4 w-4" /></button>
+                  </div>
+                );
+              })}
+              <button type="button" className="text-sm font-medium text-brand-strong" onClick={() => setRecipe((l) => [...l, { stockItemId: "", quantity: "" }])}>+ Add ingredient</button>
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-4">
+            {recipeCost === 0 && (
+              <Field label="Cost price (Rs)" className="w-40">
+                <input className={`${inputClass} w-full tabular`} inputMode="decimal" value={d.costPrice} onChange={(e) => set("costPrice", e.target.value.replace(/[^\d.]/g, ""))} placeholder="e.g. 90" />
+              </Field>
+            )}
+            {effectiveCost > 0 && (
+              <div className="pb-2 text-sm text-ink-secondary">
+                Cost <span className="tabular font-medium text-ink-primary">{rs(effectiveCost)}</span>
+                {margin != null && <> · Margin <Pill tone={margin >= 60 ? "success" : margin >= 35 ? "warning" : "danger"}>{margin.toFixed(0)}%</Pill></>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-xl border border-border-subtle p-4">
+          <Switch checked={d.isAvailable} onChange={(v) => set("isAvailable", v)} label="Available" description="Turn off to show it as Sold out everywhere." />
+          <Switch checked={d.trackStock} onChange={(v) => set("trackStock", v)} label="Count portions" description="For ready-made items (cans, bottles, cakes) — stops waiters selling more than you have." />
+          {d.trackStock && (
+            <div className="grid grid-cols-2 gap-4">
+              {!d.id && (
+                <Field label="In stock now">
+                  <input className={`${inputClass} w-full tabular`} inputMode="numeric" value={d.stockQuantity} onChange={(e) => set("stockQuantity", e.target.value.replace(/\D/g, ""))} />
+                </Field>
+              )}
+              <Field label="Warn when below">
+                <input className={`${inputClass} w-full tabular`} inputMode="numeric" value={d.lowStockThreshold} onChange={(e) => set("lowStockThreshold", e.target.value.replace(/\D/g, ""))} />
+              </Field>
+              {d.id && item && <Restock item={item} onDone={(m) => onSaved(m)} onError={onError} />}
+            </div>
+          )}
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+function Restock({ item, onDone, onError }: { item: AdminMenuItem; onDone: (m: string) => void; onError: (m: string) => void }) {
+  const [qty, setQty] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function apply(sign: 1 | -1) {
+    const n = Number(qty);
+    if (!n) return;
+    setBusy(true);
     try {
       await apiFetchJson(`/menu/${item.id}/stock`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delta }),
+        body: JSON.stringify({ delta: sign * n }),
       });
-      setRestockDrafts((cur) => ({ ...cur, [item.id]: "" }));
-      await refreshAll();
-      showToast(`Stock updated for "${item.name}"`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : `Could not update stock for "${item.name}"`, "error");
-    }
-  }
-
-  async function handleAddModifier(e: React.FormEvent) {
-    e.preventDefault();
-    setSavingModifier(true);
-    try {
-      await apiFetchJson(`/menu/${modifierItemId}/modifiers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: modifierName, priceDelta: Number(modifierPriceDelta) }),
-      });
-      setModifierName("");
-      setModifierPriceDelta("");
-      await refreshAll();
-      showToast(`Modifier "${modifierName}" added`);
-    } catch {
-      showToast("Could not add that modifier", "error");
+      onDone(sign > 0 ? `Added ${n} to ${item.name}` : `Removed ${n} from ${item.name}`);
+    } catch (e) {
+      onError((e as Error).message);
     } finally {
-      setSavingModifier(false);
+      setBusy(false);
     }
   }
-
-  async function handleUpdateModifier(modifier: Modifier, data: { name: string; priceDelta: number }) {
-    try {
-      await apiFetchJson(`/menu/modifiers/${modifier.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      await refreshAll();
-      showToast(`Modifier "${data.name}" updated`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : `Could not update "${modifier.name}"`, "error");
-    }
-  }
-
-  async function handleDeleteModifier(modifier: Modifier) {
-    try {
-      await apiFetchJson(`/menu/modifiers/${modifier.id}`, { method: "DELETE" });
-      await refreshAll();
-      showToast(`Modifier "${modifier.name}" deleted`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : `Could not delete "${modifier.name}"`, "error");
-    }
-  }
-
-  const selectedModifierItem = items.find((item) => item.id === Number(modifierItemId)) ?? null;
-  const filteredItems = items.filter((item) => item.name.toLowerCase().includes(itemSearch.toLowerCase()));
-
   return (
-    <div className="space-y-8">
-      {toastHost}
-      <PageHeader
-        title="Menu Management"
-        description="Manage categories, items, and modifiers. Items are hidden with the availability toggle, never deleted."
-      />
-
-      <SectionCard icon={<IconPlus />} title="Add new" description="Create a category, menu item, or modifier.">
-        <Tabs
-          className="mb-5"
-          tabs={[
-            { value: "category", label: "Category" },
-            { value: "item", label: "Item" },
-            { value: "modifier", label: "Modifier" },
-          ]}
-          value={activeTab}
-          onChange={setActiveTab}
-        />
-
-        {activeTab === "category" && (
-          <form onSubmit={handleAddCategory} className="flex flex-col gap-3 sm:max-w-md">
-            <Input placeholder="Name" value={categoryName} onChange={(e) => setCategoryName(e.target.value)} required />
-            <Input
-              type="number"
-              placeholder="Sort order"
-              value={categorySortOrder}
-              onChange={(e) => setCategorySortOrder(e.target.value)}
-              required
-            />
-            <Button type="submit" loading={savingCategory} className="self-start">
-              Add category
-            </Button>
-          </form>
-        )}
-
-        {activeTab === "item" && (
-          <form onSubmit={handleAddItem} className="flex flex-col gap-3 sm:max-w-md">
-            <Input placeholder="Name" value={itemName} onChange={(e) => setItemName(e.target.value)} required />
-            <Input
-              type="number"
-              step="0.01"
-              placeholder="Price"
-              value={itemPrice}
-              onChange={(e) => setItemPrice(e.target.value)}
-              required
-            />
-            <Select
-              value={itemCategoryId}
-              onChange={(e) => setItemCategoryId(e.target.value)}
-              required
-            >
-              <option value="" disabled>
-                Select a category
-              </option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </Select>
-            <Button type="submit" loading={savingItem} className="self-start">
-              Add item
-            </Button>
-          </form>
-        )}
-
-        {activeTab === "modifier" && (
-          <form onSubmit={handleAddModifier} className="flex flex-col gap-3 sm:max-w-md">
-            <Select
-              value={modifierItemId}
-              onChange={(e) => setModifierItemId(e.target.value)}
-              required
-            >
-              <option value="" disabled>
-                Select a menu item
-              </option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </Select>
-
-            {selectedModifierItem && (
-              <div className="rounded-md border border-border-subtle bg-surface-sunken p-3">
-                <p className="body-md font-semibold text-ink-primary">
-                  Adding to &ldquo;{selectedModifierItem.name}&rdquo; · Rs. {selectedModifierItem.price}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {selectedModifierItem.modifiers.length === 0 ? (
-                    <span className="body-sm text-ink-faint">No modifiers yet.</span>
-                  ) : (
-                    selectedModifierItem.modifiers.map((m) => (
-                      <span key={m.id} className="label-sm rounded-pill bg-surface-raised px-3 py-1 text-ink-secondary normal-case">
-                        {m.name} +Rs. {m.priceDelta}
-                      </span>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            <Input
-              placeholder="Name (e.g. Extra Shot)"
-              value={modifierName}
-              onChange={(e) => setModifierName(e.target.value)}
-              required
-            />
-            <Input
-              type="number"
-              step="0.01"
-              placeholder="Price delta"
-              value={modifierPriceDelta}
-              onChange={(e) => setModifierPriceDelta(e.target.value)}
-              required
-            />
-            <Button type="submit" loading={savingModifier} className="self-start">
-              Add modifier
-            </Button>
-          </form>
-        )}
-      </SectionCard>
-
-      <SectionCard
-        icon={<IconClipboardList />}
-        title="Menu items"
-        description="Search, reprice, or hide items without deleting them. Expand a row to manage its modifiers."
-      >
-        <div className="mb-5 sm:max-w-xs">
-          <Input pill placeholder="Search items…" value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} />
-        </div>
-
-        {loading ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                  <th className="py-3 pr-4">Name</th>
-                  <th className="py-3 pr-4">Category</th>
-                  <th className="py-3 pr-4">Price</th>
-                  <th className="py-3 pr-4">Stock</th>
-                  <th className="py-3 pr-4">Status</th>
-                  <th className="py-3 pr-0 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b border-border-subtle last:border-0">
-                    <td className="py-4 pr-4"><Skeleton className="h-4 w-32" /></td>
-                    <td className="py-4 pr-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
-                    <td className="py-4 pr-4"><Skeleton className="h-4 w-16" /></td>
-                    <td className="py-4 pr-4"><Skeleton className="h-4 w-24" /></td>
-                    <td className="py-4 pr-4"><Skeleton className="h-6 w-20 rounded-full" /></td>
-                    <td className="py-4 pr-0"><div className="flex justify-end gap-1.5"><Skeleton className="h-9 w-9 rounded-md" /><Skeleton className="h-9 w-9 rounded-md" /></div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : loadError ? (
-          <ErrorState
-            title="Couldn't load menu"
-            description="The menu data didn't come through — check your connection and try again."
-            onRetry={() => {
-              setLoading(true);
-              setLoadError(false);
-              refreshAll()
-                .then(() => setLoadError(false))
-                .catch(() => setLoadError(true))
-                .finally(() => setLoading(false));
-            }}
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="label-sm border-b border-border-subtle text-ink-secondary">
-                  <th className="py-3 pr-4">Name</th>
-                  <th className="py-3 pr-4">Category</th>
-                  <th className="py-3 pr-4">Price</th>
-                  <th className="py-3 pr-4">Stock</th>
-                  <th className="py-3 pr-4">Status</th>
-                  <th className="py-3 pr-0 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredItems.map((item) => {
-                  const isEditing = editingItemId === item.id;
-                  const isExpanded = expandedItemId === item.id;
-                  const nameDraft = nameDrafts[item.id] ?? item.name;
-                  const draft = priceDrafts[item.id] ?? item.price;
-                  const categoryDraft = categoryDrafts[item.id] ?? String(item.categoryId);
-                  return (
-                    <Fragment key={item.id}>
-                      <tr className="border-b border-border-subtle last:border-0">
-                        <td className="py-4 pr-4 font-medium text-ink-primary">
-                          {isEditing ? (
-                            <Input
-                              autoFocus
-                              className="w-44"
-                              value={nameDraft}
-                              onChange={(e) => setNameDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
-                            />
-                          ) : (
-                            item.name
-                          )}
-                        </td>
-                        <td className="py-4 pr-4">
-                          {isEditing ? (
-                            <Select
-                              value={categoryDraft}
-                              onChange={(e) => setCategoryDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
-                            >
-                              {categories.map((category) => (
-                                <option key={category.id} value={category.id}>
-                                  {category.name}
-                                </option>
-                              ))}
-                            </Select>
-                          ) : (
-                            <span className="label-sm rounded-pill bg-surface-sunken px-3 py-1 text-ink-secondary normal-case">
-                              {item.category.name}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 pr-4">
-                          {isEditing ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-ink-faint">Rs.</span>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                className="w-28"
-                                value={draft}
-                                onChange={(e) => setPriceDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
-                              />
-                            </div>
-                          ) : (
-                            <span className="body-md font-semibold text-ink-primary">Rs. {item.price}</span>
-                          )}
-                        </td>
-                        <td className="py-4 pr-4">
-                          {item.trackStock ? (
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`body-md font-semibold ${
-                                  item.stockQuantity <= item.lowStockThreshold
-                                    ? "text-status-danger-ink"
-                                    : "text-ink-primary"
-                                }`}
-                              >
-                                {item.stockQuantity}
-                              </span>
-                              <Input
-                                type="number"
-                                placeholder="±"
-                                className="w-16"
-                                value={restockDrafts[item.id] ?? ""}
-                                onChange={(e) => setRestockDrafts((cur) => ({ ...cur, [item.id]: e.target.value }))}
-                              />
-                              <button
-                                type="button"
-                                aria-label={`Apply stock change for ${item.name}`}
-                                onClick={() => handleRestock(item)}
-                                disabled={!restockDrafts[item.id]}
-                                className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken disabled:opacity-40"
-                              >
-                                <IconCheck className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleTrackStock(item)}
-                                className="label-sm text-ink-faint underline-offset-2 hover:underline"
-                              >
-                                Stop tracking
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleTrackStock(item)}
-                              className="label-sm text-ink-faint underline-offset-2 hover:text-ink-secondary hover:underline"
-                            >
-                              Not tracked · Track
-                            </button>
-                          )}
-                        </td>
-                        <td className="py-4 pr-4">
-                          <button type="button" onClick={() => handleUpdateItem(item, { isAvailable: !item.isAvailable })}>
-                            <StatusBadge tone={item.isAvailable ? "success" : "neutral"}>
-                              {item.isAvailable ? "Available" : "Hidden"}
-                            </StatusBadge>
-                          </button>
-                        </td>
-                        <td className="py-4 pr-0 text-right">
-                          <div className="flex justify-end gap-1.5">
-                            {isEditing ? (
-                              <>
-                                <button
-                                  type="button"
-                                  aria-label={`Save changes for ${item.name}`}
-                                  onClick={() => {
-                                    handleUpdateItem(item, {
-                                      name: nameDraft,
-                                      price: Number(draft),
-                                      categoryId: Number(categoryDraft),
-                                    });
-                                    setEditingItemId(null);
-                                  }}
-                                  className="flex h-9 w-9 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
-                                >
-                                  <IconCheck className="h-4 w-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  aria-label="Cancel edit"
-                                  onClick={() => {
-                                    setNameDrafts((cur) => ({ ...cur, [item.id]: item.name }));
-                                    setPriceDrafts((cur) => ({ ...cur, [item.id]: item.price }));
-                                    setCategoryDrafts((cur) => ({ ...cur, [item.id]: String(item.categoryId) }));
-                                    setEditingItemId(null);
-                                  }}
-                                  className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
-                                >
-                                  <IconX className="h-4 w-4" />
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                aria-label={`Edit ${item.name}`}
-                                onClick={() => setEditingItemId(item.id)}
-                                className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
-                              >
-                                <IconEdit className="h-4 w-4" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              aria-label={isExpanded ? `Hide modifiers for ${item.name}` : `Show modifiers for ${item.name}`}
-                              onClick={() => setExpandedItemId((cur) => (cur === item.id ? null : item.id))}
-                              className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
-                            >
-                              <IconChevronRight
-                                className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
-                              />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      {isExpanded && (
-                        <tr className="border-b border-border-subtle bg-surface-sunken">
-                          <td colSpan={6} className="px-4 py-4">
-                            <p className="label-sm mb-3 text-ink-faint">Modifiers for {item.name}</p>
-                            {item.modifiers.length === 0 ? (
-                              <p className="body-sm text-ink-faint">No modifiers for this item.</p>
-                            ) : (
-                              <div className="space-y-2">
-                                {item.modifiers.map((modifier) => {
-                                  const isEditingMod = editingModifierId === modifier.id;
-                                  const modNameDraft = modifierNameDrafts[modifier.id] ?? modifier.name;
-                                  const modDeltaDraft = modifierPriceDeltaDrafts[modifier.id] ?? modifier.priceDelta;
-                                  return (
-                                    <div
-                                      key={modifier.id}
-                                      className="flex flex-wrap items-center gap-3 rounded-md border border-border-subtle bg-surface-raised px-3 py-2.5"
-                                    >
-                                      {isEditingMod ? (
-                                        <>
-                                          <Input
-                                            autoFocus
-                                            className="w-40"
-                                            value={modNameDraft}
-                                            onChange={(e) =>
-                                              setModifierNameDrafts((cur) => ({ ...cur, [modifier.id]: e.target.value }))
-                                            }
-                                          />
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="text-sm text-ink-faint">Rs.</span>
-                                            <Input
-                                              type="number"
-                                              step="0.01"
-                                              className="w-24"
-                                              value={modDeltaDraft}
-                                              onChange={(e) =>
-                                                setModifierPriceDeltaDrafts((cur) => ({
-                                                  ...cur,
-                                                  [modifier.id]: e.target.value,
-                                                }))
-                                              }
-                                            />
-                                          </div>
-                                          <div className="ml-auto flex gap-1.5">
-                                            <button
-                                              type="button"
-                                              aria-label={`Save modifier ${modifier.name}`}
-                                              onClick={() => {
-                                                handleUpdateModifier(modifier, {
-                                                  name: modNameDraft,
-                                                  priceDelta: Number(modDeltaDraft),
-                                                });
-                                                setEditingModifierId(null);
-                                              }}
-                                              className="flex h-8 w-8 items-center justify-center rounded-md text-status-success-ink transition hover:bg-status-success-tint"
-                                            >
-                                              <IconCheck className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                              type="button"
-                                              aria-label="Cancel edit"
-                                              onClick={() => {
-                                                setModifierNameDrafts((cur) => ({ ...cur, [modifier.id]: modifier.name }));
-                                                setModifierPriceDeltaDrafts((cur) => ({
-                                                  ...cur,
-                                                  [modifier.id]: modifier.priceDelta,
-                                                }));
-                                                setEditingModifierId(null);
-                                              }}
-                                              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-sunken"
-                                            >
-                                              <IconX className="h-4 w-4" />
-                                            </button>
-                                          </div>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <span className="body-md font-semibold text-ink-primary">{modifier.name}</span>
-                                          <span className="body-sm text-ink-secondary">+Rs. {modifier.priceDelta}</span>
-                                          <div className="ml-auto flex gap-1.5">
-                                            <button
-                                              type="button"
-                                              aria-label={`Edit modifier ${modifier.name}`}
-                                              onClick={() => setEditingModifierId(modifier.id)}
-                                              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary transition hover:bg-surface-sunken"
-                                            >
-                                              <IconEdit className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                              type="button"
-                                              aria-label={`Delete modifier ${modifier.name}`}
-                                              onClick={() => setDeletingModifier(modifier)}
-                                              className="flex h-8 w-8 items-center justify-center rounded-md text-status-danger-ink transition hover:bg-status-danger-tint"
-                                            >
-                                              <IconTrash className="h-4 w-4" />
-                                            </button>
-                                          </div>
-                                        </>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-                {filteredItems.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="py-4">
-                      <EmptyState
-                        icon={<IconClipboardList />}
-                        title={items.length === 0 ? "No menu items yet" : "No items match your search"}
-                        description={
-                          items.length === 0
-                            ? "Add your first item using the form above and it will appear here."
-                            : "Try a different search term or clear the filter."
-                        }
-                      />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SectionCard>
-
-      <ConfirmDialog
-        open={deletingModifier !== null}
-        title={`Delete "${deletingModifier?.name ?? ""}"?`}
-        description="This modifier will be permanently removed from the menu item. This can't be undone."
-        confirmLabel="Delete"
-        tone="danger"
-        onConfirm={() => {
-          if (deletingModifier) handleDeleteModifier(deletingModifier);
-          setDeletingModifier(null);
-        }}
-        onCancel={() => setDeletingModifier(null)}
-      />
+    <div className="col-span-2">
+      <p className="mb-1.5 text-sm font-medium text-ink-primary">{item.stockQuantity} left · adjust</p>
+      <div className="flex gap-2">
+        <input className={`${inputClass} tabular w-28`} inputMode="numeric" placeholder="Qty" value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} />
+        <Button variant="secondary" disabled={busy || !qty} onClick={() => apply(1)}>+ Restock</Button>
+        <Button variant="ghost" disabled={busy || !qty} onClick={() => apply(-1)}>− Remove</Button>
+      </div>
     </div>
   );
 }

@@ -13,16 +13,16 @@ const TONE_HEADER: Record<NonNullable<CardProps["tone"]>, string> = {
 
 export function Card({ title, action, tone, children, className = "" }: CardProps) {
   return (
-    <div className={`overflow-hidden rounded-lg border border-border-subtle bg-surface-raised shadow-sm ${className}`}>
+    <div className={`overflow-hidden rounded-2xl border border-border-subtle bg-surface-raised ${className}`}>
       {(title || action) && (
         <div
-          className={`flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3 ${tone ? TONE_HEADER[tone] : ""}`}
+          className={`flex items-center justify-between gap-3 border-b border-border-subtle px-5 py-4 ${tone ? TONE_HEADER[tone] : ""}`}
         >
           {title && <h3 className="heading-sm text-ink-primary">{title}</h3>}
           {action}
         </div>
       )}
-      <div className="p-4">{children}</div>
+      <div className="p-5">{children}</div>
     </div>
   );
 }

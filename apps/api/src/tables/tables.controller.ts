@@ -14,6 +14,18 @@ export class TablesController {
   constructor(private tablesService: TablesService) {}
 
   @UseGuards(JwtAuthGuard)
+  @Get('requests')
+  listRequests(@CurrentUser() user: CurrentUserPayload) {
+    return this.tablesService.listRequests(user.cafeId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('requests/:id/resolve')
+  resolveRequest(@CurrentUser() user: CurrentUserPayload, @Param('id', ParseIntPipe) id: number) {
+    return this.tablesService.resolveRequest(user.cafeId, id, user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get()
   findAll(@CurrentUser() user: CurrentUserPayload) {
     return this.tablesService.findAll(user.cafeId);

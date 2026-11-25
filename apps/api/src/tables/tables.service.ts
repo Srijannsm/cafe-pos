@@ -4,10 +4,11 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateTableDto } from './dto/create-table.dto.js';
 import { UpdateTableDto } from './dto/update-table.dto.js';
 import { assertNotOverdue, assertTableLimit } from '../subscription/plan-limits.js';
+import { OrdersGateway } from '../orders/orders.gateway.js';
 
 @Injectable()
 export class TablesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private gateway: OrdersGateway) {}
 
   async findAll(cafeId: number) {
     const tables = await this.prisma.restaurantTable.findMany({
@@ -18,15 +19,29 @@ export class TablesService {
       },
     });
 
-    const activeOrders = await this.prisma.order.findMany({
-      where: { cafeId, status: { notIn: ['paid', 'cancelled'] } },
-      select: { id: true, tableId: true, status: true },
-    });
+    const [activeOrders, openRequests] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { cafeId, status: { notIn: ['paid', 'cancelled'] } },
+        select: {
+          id: true, tableId: true, status: true, createdAt: true, source: true,
+          waiter: { select: { name: true } },
+          orderItems: {
+            where: { voidedAt: null },
+            select: {
+              quantity: true, price: true, sentToKitchen: true, status: true,
+              orderItemModifiers: { select: { modifier: { select: { priceDelta: true } } } },
+            },
+          },
+        },
+      }),
+      this.prisma.tableRequest.findMany({
+        where: { cafeId, resolvedAt: null },
+        select: { id: true, tableId: true, type: true, createdAt: true },
+      }),
+    ]);
 
     return tables.map((table) => {
       const activeOrder = activeOrders.find((order) => order.tableId === table.id);
-      // A table absorbed into another (mergedIntoId set) is treated as reserved
-      // so the floor view can hide it. The primary table shows mergedFrom info.
       const derivedStatus =
         table.mergedIntoId != null
           ? 'reserved'
@@ -35,14 +50,46 @@ export class TablesService {
             : activeOrder
               ? 'occupied'
               : 'free';
+      // Running total + "unconfirmed QR items" + "ready to serve" drive the
+      // floor card, so a waiter can read the room without opening tables.
+      const runningTotal = activeOrder?.orderItems.reduce((sum, i) => {
+        const mods = i.orderItemModifiers.reduce((m, x) => m + Number(x.modifier.priceDelta), 0);
+        return sum + (Number(i.price) + mods) * i.quantity;
+      }, 0) ?? 0;
       return {
         ...table,
         status: derivedStatus,
         activeOrderId: activeOrder?.id ?? null,
         activeOrderStatus: activeOrder?.status ?? null,
-        // mergedFrom / mergedIntoId come through from the include above
+        orderStartedAt: activeOrder?.createdAt ?? null,
+        waiterName: activeOrder?.waiter?.name ?? null,
+        itemCount: activeOrder?.orderItems.reduce((n, i) => n + i.quantity, 0) ?? 0,
+        runningTotal: runningTotal.toFixed(2),
+        unsentCount: activeOrder?.orderItems.filter((i) => !i.sentToKitchen).length ?? 0,
+        readyCount: activeOrder?.orderItems.filter((i) => i.status === 'ready').length ?? 0,
+        isQrOrder: activeOrder?.source === 'qr',
+        requests: openRequests.filter((r) => r.tableId === table.id),
       };
     });
+  }
+
+  listRequests(cafeId: number) {
+    return this.prisma.tableRequest.findMany({
+      where: { cafeId, resolvedAt: null },
+      orderBy: { createdAt: 'asc' },
+      include: { table: { select: { tableNumber: true } } },
+    });
+  }
+
+  async resolveRequest(cafeId: number, id: number, userId: number) {
+    const req = await this.prisma.tableRequest.findFirst({ where: { id, cafeId } });
+    if (!req) throw new NotFoundException('Request not found');
+    const updated = await this.prisma.tableRequest.update({
+      where: { id },
+      data: { resolvedAt: new Date(), resolvedById: userId },
+    });
+    this.gateway.emitFloorChanged(cafeId);
+    return updated;
   }
 
   /**

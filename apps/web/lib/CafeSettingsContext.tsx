@@ -1,15 +1,32 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { applyBrand } from "./theme";
 
-interface CafeSettings {
+export interface CafeSettings {
   name: string;
   slug: string;
   logoUrl: string | null;
   themeColor: string | null;
+  coverImageUrl: string | null;
+  tagline: string | null;
+  fontStyle: string;
+  menuLayout: string;
+  phone: string | null;
+  address: string | null;
+  wifiName: string | null;
+  wifiPassword: string | null;
+  instagram: string | null;
+  facebook: string | null;
+  tiktok: string | null;
+  receiptFooter: string | null;
   vatEnabled: boolean;
   vatRate: string;
   panNumber: string | null;
+  pricesIncludeVat: boolean;
+  serviceChargeRate: string;
+  inventoryEnabled: boolean;
+  gamesEnabled: boolean;
 }
 
 interface CafeSettingsContextValue {
@@ -26,80 +43,34 @@ const CafeSettingsContext = createContext<CafeSettingsContextValue>({
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!m) return null;
-  let r = parseInt(m[1]!.slice(0, 2), 16) / 255;
-  let g = parseInt(m[1]!.slice(2, 4), 16) / 255;
-  let b = parseInt(m[1]!.slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-      case g: h = ((b - r) / d + 2) / 6; break;
-      case b: h = ((r - g) / d + 4) / 6; break;
-    }
-  }
-  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
-}
-
-function applyTheme(themeColor: string | null) {
-  if (!themeColor) return;
-  const hsl = hexToHsl(themeColor);
-  if (!hsl) return;
-  const { h, s, l } = hsl;
-  const root = document.documentElement;
-  root.style.setProperty("--color-brand", `oklch(from hsl(${h} ${s}% ${l}%) l c h)`);
-  root.style.setProperty("--brand-h", `${h}`);
-  root.style.setProperty("--brand-s", `${s}%`);
-  root.style.setProperty("--brand-l", `${l}%`);
-  let styleEl = document.getElementById("cafe-theme") as HTMLStyleElement | null;
-  if (!styleEl) {
-    styleEl = document.createElement("style");
-    styleEl.id = "cafe-theme";
-    document.head.appendChild(styleEl);
-  }
-  const darkerL = Math.max(l - 8, 10);
-  const tintL = Math.min(l + 42, 96);
-  const tintS = Math.max(s - 20, 10);
-  styleEl.textContent = `
-    :root {
-      --color-brand: hsl(${h}, ${s}%, ${l}%);
-      --color-brand-strong: hsl(${h}, ${s}%, ${darkerL}%);
-      --color-brand-tint: hsl(${h}, ${tintS}%, ${tintL}%);
-    }
-  `;
-}
-
 export function CafeSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<CafeSettings | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function fetchSettings() {
+  const fetchSettings = useCallback(async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-      const res = await fetch(`${apiUrl}/cafes/settings`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      // The platform panel and the public QR page brand themselves -- a cafe
+      // staff token left in this browser must not recolour them.
+      if (/^\/(platform|order\/table)/.test(window.location.pathname)) return;
+      const token = localStorage.getItem("accessToken");
+      if (!token) return;
+      // Plain fetch (not apiFetch) on purpose: a 401 here must not trigger
+      // the global logout redirect -- that caused a login-page reload loop.
+      const res = await fetch(`${API_BASE}/cafes/settings`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
-      const data = await res.json() as CafeSettings;
+      const data = (await res.json()) as CafeSettings;
       setSettings(data);
-      applyTheme(data.themeColor);
+      applyBrand(data.themeColor, data.fontStyle);
     } catch {
-      // skip
+      // offline -- keep defaults
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     fetchSettings();
-  }, []);
+  }, [fetchSettings]);
 
   return (
     <CafeSettingsContext.Provider value={{ settings, loading, refresh: fetchSettings }}>

@@ -3,6 +3,7 @@ import { MenuController } from './menu.controller.js';
 import { MenuService } from './menu.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
+import { PlanFeatureGuard } from '../plans/plan-feature.guard.js';
 
 // See orders.controller.spec.ts -- guards are overridden rather than wired
 // up with real Passport/JWT infra for a plain "does it wire up" test.
@@ -17,6 +18,8 @@ describe('MenuController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PlanFeatureGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -30,7 +31,21 @@ export class CreateCafeDto {
 
   @IsString()
   @Length(4, 4)
+  @Matches(/^\d{4}$/, { message: 'adminPin must be 4 digits' })
   adminPin: string;
+
+  // Start on a trial (default) or straight onto a paid plan.
+  @IsOptional()
+  @IsIn(['starter', 'standard', 'premium'])
+  plan?: 'starter' | 'standard' | 'premium';
+
+  @IsOptional()
+  @IsBoolean()
+  startTrial?: boolean;
+
+  @IsOptional()
+  @IsIn(['monthly', 'yearly'])
+  billingCycle?: string;
 
   @IsOptional()
   @IsBoolean()

@@ -9,6 +9,6 @@ import { AuthModule } from '../auth/auth.module.js';
   imports: [PrismaModule, AuthModule],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersGateway],
-  exports: [OrdersService],
+  exports: [OrdersService, OrdersGateway],
 })
 export class OrdersModule {}

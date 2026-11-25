@@ -1,314 +1,243 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { apiFetchJson } from "../../lib/api";
 import { useRequireAuth } from "../../lib/useRequireAuth";
-import { useOrdersSocket } from "../../lib/useOrdersSocket";
-import { NavBar } from "../../components/NavBar";
-import { IconClock, IconInbox, IconAlert, IconCheck } from "../../components/icons";
-import { Card } from "../../components/ui/Card";
-import { StatusBadge } from "../../components/ui/StatusBadge";
-import { Button } from "../../components/ui/Button";
-import { Skeleton } from "../../components/ui/Skeleton";
-import { EmptyState } from "../../components/ui/EmptyState";
-import { ErrorState } from "../../components/ui/ErrorState";
+import { useCafeSocket, chime } from "../../lib/useCafeSocket";
+import { useCafeSettings } from "../../lib/CafeSettingsContext";
+import { IconChevronLeft, IconSound, IconHistory, IconCheck } from "../../components/icons";
 
-type OrderItem = {
-  id: number;
-  quantity: number;
-  status: "pending" | "ready" | "served";
-  menuItem: { name: string };
-  orderItemModifiers: { id: number; modifier: { name: string } }[];
+type Station = "kitchen" | "bar" | "hookah";
+type Item = {
+  id: number; quantity: number; status: "pending" | "ready" | "served"; sentToKitchen: boolean; station: Station;
+  note: string | null; voidedAt: string | null; createdAt: string;
+  menuItem: { name: string }; orderItemModifiers: { modifier: { name: string } }[];
 };
-
-type KitchenOrder = {
-  id: number;
-  createdAt: string;
-  table: { tableNumber: string };
-  orderItems: OrderItem[];
+type Order = {
+  id: number; status: string; orderType: "dine_in" | "takeaway"; source: "staff" | "qr"; notes: string | null; createdAt: string;
+  table: { tableNumber: string }; waiter: { name: string } | null; orderItems: Item[];
 };
+type Ticket = { key: string; order: Order; items: Item[]; pending: Item[]; since: number };
 
-function elapsedMinutes(createdAt: string): number {
-  return Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000));
-}
+// Minutes after which a ticket turns amber / red, per station -- drinks
+// should be quicker than food.
+const LIMITS: Record<Station | "all", [number, number]> = { all: [10, 15], kitchen: [10, 15], bar: [5, 8], hookah: [8, 12] };
+const STATIONS: { value: Station | "all"; label: string }[] = [
+  { value: "all", label: "All" }, { value: "kitchen", label: "Kitchen" }, { value: "bar", label: "Bar" }, { value: "hookah", label: "Hookah" },
+];
 
-function urgencyLevel(minutes: number): "none" | "warning" | "danger" {
-  if (minutes >= 20) return "danger";
-  if (minutes >= 10) return "warning";
-  return "none";
-}
-
-/** Play a short chime using the Web Audio API — no external assets needed. */
-function playNewOrderChime() {
-  try {
-    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      const start = ctx.currentTime + i * 0.12;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.25, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
-      osc.start(start);
-      osc.stop(start + 0.35);
-    });
-  } catch {
-    // Silently ignore — AudioContext may not be available in all environments
-  }
-}
-
-export default function KitchenPage() {
+export default function KitchenDisplay() {
   const ready = useRequireAuth();
-  const [orders, setOrders] = useState<KitchenOrder[]>([]);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-  const [, setTick] = useState(0); // drives per-second re-render for live timers
-  const [exitingIds, setExitingIds] = useState<Set<number>>(new Set());
-  const [markingAllIds, setMarkingAllIds] = useState<Set<number>>(new Set());
-  const knownOrderIds = useRef<Set<number>>(new Set());
-  const isFirstLoad = useRef(true);
+  const { settings } = useCafeSettings();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [station, setStation] = useState<Station | "all">("all");
+  const [now, setNow] = useState(Date.now());
+  const [sound, setSound] = useState(true);
+  const [allDay, setAllDay] = useState(false);
+  const [flash, setFlash] = useState<Set<number>>(new Set());
+  const [bumped, setBumped] = useState<{ ids: number[]; label: string; at: number }[]>([]);
+  const [busy, setBusy] = useState<Set<number>>(new Set());
+  const known = useRef<Set<number>>(new Set());
+  const first = useRef(true);
 
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
+    const s = new URLSearchParams(window.location.search).get("station") as Station | null;
+    if (s && LIMITS[s]) setStation(s);
+    setSound(localStorage.getItem("kdsSound") !== "0");
   }, []);
 
-  const loadOrders = useCallback((isInitial = false) => {
-    return apiFetchJson<KitchenOrder[]>("/orders?status=preparing")
-      .then((res) => {
-        setExitingIds((exiting) => {
-          const visible = res.filter((o) => !exiting.has(o.id));
-
-          // Play chime for brand-new orders (not on the very first load)
-          if (!isFirstLoad.current) {
-            const newOnes = visible.filter((o) => !knownOrderIds.current.has(o.id));
-            if (newOnes.length > 0) playNewOrderChime();
-          }
-          isFirstLoad.current = false;
-
-          knownOrderIds.current = new Set(visible.map((o) => o.id));
-          setOrders(visible);
-          return exiting;
-        });
-        setLoadError(false);
-      })
-      .catch(() => setLoadError(true));
+  const load = useCallback(async () => {
+    try {
+      const list = await apiFetchJson<Order[]>("/orders?status=preparing");
+      // Flash + chime for items we haven't seen before.
+      const fresh = new Set<number>();
+      for (const o of list) for (const i of o.orderItems) {
+        if (i.sentToKitchen && i.status === "pending" && !i.voidedAt && !known.current.has(i.id)) fresh.add(o.id);
+        known.current.add(i.id);
+      }
+      if (!first.current && fresh.size) {
+        if (localStorage.getItem("kdsSound") !== "0") chime(3);
+        setFlash(fresh);
+        setTimeout(() => setFlash(new Set()), 4000);
+      }
+      first.current = false;
+      setOrders(list);
+    } catch {
+      // keep showing the last board
+    }
   }, []);
+
+  const { connected } = useCafeSocket(ready, {
+    "order.sentToKitchen": () => load(),
+    "order.itemVoided": () => load(),
+    "floor.changed": () => load(),
+  });
 
   useEffect(() => {
     if (!ready) return;
-    loadOrders(true).finally(() => setInitialLoading(false));
-    const interval = setInterval(() => loadOrders(), 5000);
-    return () => clearInterval(interval);
-  }, [ready, loadOrders]);
+    load();
+    const poll = setInterval(load, connected ? 30000 : 6000);
+    const tick = setInterval(() => setNow(Date.now()), 15000);
+    return () => { clearInterval(poll); clearInterval(tick); };
+  }, [ready, load, connected]);
 
-  const { connected } = useOrdersSocket(ready, {
-    onSentToKitchen: () => loadOrders(),
-  });
+  // Keep the tablet screen on during service.
+  useEffect(() => {
+    let lock: { release: () => Promise<void> } | null = null;
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } };
+    nav.wakeLock?.request("screen").then((l) => (lock = l)).catch(() => {});
+    return () => { lock?.release().catch(() => {}); };
+  }, []);
 
-  /** Trigger exit animation then remove the order card */
-  function triggerExit(orderId: number) {
-    setExitingIds((prev) => new Set([...prev, orderId]));
-    setTimeout(() => {
-      setOrders((curr) => curr.filter((o) => o.id !== orderId));
-      setExitingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
-      knownOrderIds.current.delete(orderId);
-    }, 400);
-  }
-
-  async function markReady(orderItemId: number) {
-    setOrders((current) => {
-      const updated = current.map((order) => ({
-        ...order,
-        orderItems: order.orderItems.map((item) =>
-          item.id === orderItemId ? { ...item, status: "ready" as const } : item,
-        ),
-      }));
-      for (const order of updated) {
-        const allReady = order.orderItems.length > 0 && order.orderItems.every((i) => i.status === "ready");
-        if (allReady && order.orderItems.some((i) => i.id === orderItemId)) {
-          triggerExit(order.id);
-        }
-      }
-      return updated;
-    });
-    try {
-      await apiFetchJson(`/orders/items/${orderItemId}/ready`, { method: "PATCH" });
-    } finally {
-      setTimeout(() => loadOrders(), 500);
+  const tickets: Ticket[] = useMemo(() => {
+    const out: Ticket[] = [];
+    for (const o of orders) {
+      const sent = o.orderItems.filter((i) => i.sentToKitchen && (station === "all" || i.station === station));
+      const pending = sent.filter((i) => i.status === "pending" && !i.voidedAt);
+      if (pending.length === 0) continue;
+      // Show what's still to make plus voids (struck through) so the cook stops making them.
+      const items = sent.filter((i) => (i.status === "pending" || i.voidedAt) && !(i.voidedAt && i.status !== "pending"));
+      out.push({ key: `${o.id}-${station}`, order: o, items, pending, since: Math.min(...pending.map((i) => new Date(i.createdAt).getTime())) });
     }
-  }
+    return out.sort((a, b) => a.since - b.since);
+  }, [orders, station]);
 
-  async function markAllReady(order: KitchenOrder) {
-    const pendingItems = order.orderItems.filter((i) => i.status === "pending");
-    if (pendingItems.length === 0) return;
-
-    setMarkingAllIds((prev) => new Set([...prev, order.id]));
-
-    // Optimistically mark all as ready
-    setOrders((current) =>
-      current.map((o) =>
-        o.id === order.id
-          ? { ...o, orderItems: o.orderItems.map((i) => ({ ...i, status: "ready" as const })) }
-          : o,
-      ),
-    );
-    triggerExit(order.id);
-
-    try {
-      await Promise.all(
-        pendingItems.map((item) =>
-          apiFetchJson(`/orders/items/${item.id}/ready`, { method: "PATCH" }),
-        ),
-      );
-    } finally {
-      setMarkingAllIds((prev) => { const s = new Set(prev); s.delete(order.id); return s; });
-      setTimeout(() => loadOrders(), 500);
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: 0, kitchen: 0, bar: 0, hookah: 0 };
+    for (const o of orders) for (const i of o.orderItems) {
+      if (i.sentToKitchen && i.status === "pending" && !i.voidedAt) { c.all! += i.quantity; c[i.station] = (c[i.station] ?? 0) + i.quantity; }
     }
+    return c;
+  }, [orders]);
+
+  const allDayList = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of tickets) for (const i of t.pending) m.set(i.menuItem.name, (m.get(i.menuItem.name) ?? 0) + i.quantity);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [tickets]);
+
+  async function markReady(ids: number[], label: string) {
+    setBusy((b) => new Set([...b, ...ids]));
+    // Optimistic: strike them immediately.
+    setOrders((os) => os.map((o) => ({ ...o, orderItems: o.orderItems.map((i) => (ids.includes(i.id) ? { ...i, status: "ready" as const } : i)) })));
+    await Promise.all(ids.map((id) => apiFetchJson(`/orders/items/${id}/ready`, { method: "PATCH" }).catch(() => {})));
+    setBumped((b) => [{ ids, label, at: Date.now() }, ...b].slice(0, 10));
+    setBusy((b) => new Set([...b].filter((x) => !ids.includes(x))));
+    load();
   }
+
+  async function recall(entry: { ids: number[] }) {
+    await Promise.all(entry.ids.map((id) => apiFetchJson(`/orders/items/${id}/recall`, { method: "PATCH" }).catch(() => {})));
+    setBumped((b) => b.filter((x) => x !== entry));
+    load();
+  }
+
+  function setStationUrl(s: Station | "all") {
+    setStation(s);
+    window.history.replaceState(null, "", s === "all" ? "/kitchen" : `/kitchen?station=${s}`);
+  }
+
+  const [warn, late] = LIMITS[station];
 
   return (
-    <main id="main-content" data-theme="dark" className="min-h-screen bg-surface-canvas">
-      <NavBar />
-      <div className="p-4 sm:p-6">
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <h1 className="display-md text-ink-primary">Kitchen</h1>
-          {orders.length > 0 && (
-            <p className="body-sm text-ink-faint">
-              {orders.length} order{orders.length !== 1 ? "s" : ""} in queue
-            </p>
-          )}
+    <main data-theme="dark" className="flex h-[100dvh] flex-col bg-surface-canvas text-ink-primary">
+      <header className="flex shrink-0 items-center gap-3 border-b border-border-subtle bg-surface-raised px-3 py-2.5">
+        <Link href="/" aria-label="Back" className="rounded-lg p-2 text-ink-secondary hover:bg-surface-sunken"><IconChevronLeft className="h-5 w-5" /></Link>
+        <p className="hidden font-semibold sm:block">{settings?.name ?? "Kitchen"}</p>
+        <div className="no-scrollbar flex gap-1 overflow-x-auto rounded-xl bg-surface-sunken p-1">
+          {STATIONS.map((s) => (
+            <button key={s.value} type="button" onClick={() => setStationUrl(s.value)} className={`shrink-0 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${station === s.value ? "bg-surface-overlay text-ink-primary" : "text-ink-faint"}`}>
+              {s.label} {counts[s.value] ? <span className="tabular ml-1 rounded-full bg-brand px-1.5 text-xs text-on-brand">{counts[s.value]}</span> : null}
+            </button>
+          ))}
         </div>
+        <div className="flex-1" />
+        {!connected && <span className="rounded-full bg-status-danger px-3 py-1 text-xs font-semibold text-white">Offline — reconnecting</span>}
+        <button type="button" onClick={() => setAllDay((a) => !a)} className={`rounded-lg px-3 py-2 text-sm font-semibold ${allDay ? "bg-brand text-on-brand" : "text-ink-secondary hover:bg-surface-sunken"}`}>All day</button>
+        <button type="button" aria-label="Sound" onClick={() => { const v = !sound; setSound(v); localStorage.setItem("kdsSound", v ? "1" : "0"); if (v) chime(1); }} className={`rounded-lg p-2 ${sound ? "text-ink-primary" : "text-ink-faint line-through"}`}>
+          <IconSound className="h-5 w-5" />
+        </button>
+      </header>
 
-        {ready && !connected && (
-          <div className="mb-5 flex items-center gap-2 rounded-lg border border-status-warning bg-status-warning-tint px-4 py-3 text-sm font-medium text-status-warning-ink">
-            <IconAlert className="h-4 w-4 shrink-0" />
-            Live updates disconnected — new orders will still appear every 5 seconds.
-          </div>
-        )}
-
-        {!ready || initialLoading ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-lg border border-border-subtle bg-surface-raised p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <Skeleton className="h-5 w-24" />
-                  <Skeleton className="h-5 w-16 rounded-pill" />
-                </div>
-                <div className="space-y-2">
-                  <Skeleton variant="rect" className="h-20 w-full rounded-md" />
-                  <Skeleton variant="rect" className="h-20 w-full rounded-md" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : loadError ? (
-          <ErrorState
-            title="Couldn't load orders"
-            description="The kitchen queue didn't come through — check your connection and try again."
-            onRetry={() => {
-              setInitialLoading(true);
-              loadOrders(true).finally(() => setInitialLoading(false));
-            }}
-          />
-        ) : orders.length === 0 ? (
-          <EmptyState
-            icon={<IconInbox className="h-6 w-6" />}
-            title="No orders in the kitchen right now"
-            description="Orders will show up here once a waiter sends them to the kitchen."
-          />
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {orders.map((order) => {
-              const minutes = elapsedMinutes(order.createdAt);
-              const level = urgencyLevel(minutes);
-              const readyCount = order.orderItems.filter((i) => i.status === "ready").length;
-              const totalCount = order.orderItems.length;
-              const allReady = readyCount === totalCount && totalCount > 0;
-              const isMarkingAll = markingAllIds.has(order.id);
-
-              return (
-                <Card
-                  key={order.id}
-                  tone={level === "none" ? undefined : level}
-                  className={exitingIds.has(order.id) ? "animate-slide-out-left opacity-0 transition-opacity duration-400" : "animate-card-in"}
-                  title={
-                    <>
-                      {order.table.tableNumber} <span className="text-ink-faint">#{order.id}</span>
-                    </>
-                  }
-                  action={
-                    <div className="flex items-center gap-2">
-                      {/* Item progress pill */}
-                      <span
-                        className={`label-sm rounded-pill px-2 py-0.5 font-semibold ${
-                          allReady
-                            ? "bg-status-success-tint text-status-success-ink"
-                            : readyCount > 0
-                              ? "bg-status-warning-tint text-status-warning-ink"
-                              : "bg-surface-sunken text-ink-faint"
-                        }`}
-                      >
-                        {readyCount}/{totalCount}
-                      </span>
-                      <StatusBadge tone={level === "none" ? "neutral" : level} icon={IconClock}>
-                        {minutes < 1 ? "just now" : `${minutes}m`}
-                      </StatusBadge>
-                    </div>
-                  }
-                >
-                  <div className="grid gap-2">
-                    {order.orderItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`rounded-md p-3 transition-colors ${
-                          item.status === "pending" ? "bg-surface-sunken" : "bg-status-success-tint"
-                        }`}
-                      >
-                        <div className="mb-2">
-                          <div className="body-lg font-semibold text-ink-primary">
-                            {item.quantity}× {item.menuItem.name}
-                          </div>
-                          {item.orderItemModifiers.length > 0 && (
-                            <div className="body-sm text-ink-secondary">
-                              {item.orderItemModifiers.map((oim) => oim.modifier.name).join(", ")}
-                            </div>
-                          )}
-                        </div>
-                        {item.status === "pending" ? (
-                          <Button onClick={() => markReady(item.id)} className="w-full">
-                            Mark ready
-                          </Button>
-                        ) : (
-                          <StatusBadge tone="success">Ready</StatusBadge>
-                        )}
+      <div className="flex min-h-0 flex-1">
+        <section className="flex-1 overflow-y-auto p-3">
+          {tickets.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-faint">
+              <IconCheck className="h-10 w-10" />
+              <p className="text-lg font-semibold">All caught up</p>
+              <p className="text-sm">New tickets appear here with a chime.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              {tickets.map((t) => {
+                const mins = Math.floor((now - t.since) / 60000);
+                const tone = mins >= late ? "bg-status-danger text-white" : mins >= warn ? "bg-status-warning text-black" : "bg-surface-overlay text-ink-primary";
+                return (
+                  <article key={t.key} className={`flex flex-col overflow-hidden rounded-2xl border-2 bg-surface-raised ${flash.has(t.order.id) ? "animate-pulse border-brand" : "border-border-subtle"}`}>
+                    <button type="button" onClick={() => markReady(t.pending.map((i) => i.id), `T${t.order.table.tableNumber}`)} className={`flex items-center justify-between px-4 py-3 text-left ${tone}`} title="Tap to bump the whole ticket">
+                      <div>
+                        <p className="text-2xl font-bold leading-none">{t.order.orderType === "takeaway" ? "TA" : "T"}{t.order.table.tableNumber}</p>
+                        <p className="mt-1 text-xs font-medium opacity-80">{t.order.waiter?.name ?? "QR"} · #{t.order.id}{t.order.orderType === "takeaway" ? " · TAKEAWAY" : ""}</p>
                       </div>
-                    ))}
-                  </div>
+                      <div className="text-right">
+                        <p className="tabular text-xl font-bold">{mins}m</p>
+                        <p className="text-[11px] font-semibold uppercase opacity-80">Bump ✓</p>
+                      </div>
+                    </button>
+                    {t.order.notes && <p className="border-b border-border-subtle bg-status-warning-tint px-4 py-2 text-sm font-semibold text-status-warning-ink">⚠ {t.order.notes}</p>}
+                    <ul className="flex-1 divide-y divide-border-subtle">
+                      {t.items.map((i) => (
+                        <li key={i.id}>
+                          <button
+                            type="button"
+                            disabled={!!i.voidedAt || busy.has(i.id)}
+                            onClick={() => markReady([i.id], `${i.quantity}× ${i.menuItem.name}`)}
+                            className="flex w-full items-start gap-3 px-4 py-3 text-left transition active:bg-surface-sunken disabled:cursor-default"
+                          >
+                            <span className={`tabular text-xl font-bold ${i.voidedAt ? "text-status-danger line-through" : ""}`}>{i.quantity}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className={`block text-lg font-semibold leading-tight ${i.voidedAt ? "text-status-danger line-through" : ""}`}>{i.menuItem.name}</span>
+                              {i.voidedAt && <span className="text-xs font-bold uppercase text-status-danger">Void — stop</span>}
+                              {i.orderItemModifiers.length > 0 && <span className="block text-sm font-semibold text-brand-strong">+ {i.orderItemModifiers.map((m) => m.modifier.name).join(", ")}</span>}
+                              {i.note && <span className="mt-1 inline-block rounded bg-status-warning px-1.5 py-0.5 text-sm font-semibold text-black">{i.note}</span>}
+                              {station === "all" && i.station !== "kitchen" && <span className="ml-1 text-xs uppercase text-ink-faint">{i.station}</span>}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
-                  {/* Mark all ready — only show when there are multiple pending items */}
-                  {order.orderItems.filter((i) => i.status === "pending").length > 1 && (
-                    <div className="mt-3 border-t border-border-subtle pt-3">
-                      <Button
-                        variant="secondary"
-                        className="w-full"
-                        disabled={isMarkingAll}
-                        onClick={() => markAllReady(order)}
-                      >
-                        <IconCheck className="h-4 w-4 mr-1.5" />
-                        {isMarkingAll ? "Marking all ready…" : "Mark all ready"}
-                      </Button>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
+        {(allDay || bumped.length > 0) && (
+          <aside className="hidden w-72 shrink-0 flex-col border-l border-border-subtle bg-surface-raised md:flex">
+            {allDay && (
+              <div className="border-b border-border-subtle p-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">All day</p>
+                {allDayList.length === 0 ? <p className="text-sm text-ink-faint">Nothing open.</p> : (
+                  <ul className="space-y-2">{allDayList.map(([n, q]) => <li key={n} className="flex justify-between text-base"><span className="truncate">{n}</span><span className="tabular font-bold">{q}</span></li>)}</ul>
+                )}
+              </div>
+            )}
+            {bumped.length > 0 && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint"><IconHistory className="h-3.5 w-3.5" />Recently done</p>
+                <ul className="space-y-2">
+                  {bumped.map((b) => (
+                    <li key={b.at} className="flex items-center justify-between gap-2 rounded-lg bg-surface-sunken px-3 py-2 text-sm">
+                      <span className="truncate">{b.label}</span>
+                      <button type="button" onClick={() => recall(b)} className="shrink-0 text-xs font-semibold text-brand-strong">Recall</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </aside>
         )}
       </div>
     </main>

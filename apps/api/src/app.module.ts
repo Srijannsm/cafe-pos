@@ -13,6 +13,12 @@ import { PlatformAdminModule } from './platform-admin/platform-admin.module.js';
 import { PlatformAuthModule } from './platform-auth/platform-auth.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { PublicOrderingModule } from './public-ordering/public-ordering.module.js';
+import { AuditModule } from './audit/audit.module.js';
+import { UploadsModule } from './uploads/uploads.module.js';
+import { InventoryModule } from './inventory/inventory.module.js';
+import { ShiftsModule } from './shifts/shifts.module.js';
+import { GamesModule } from './games/games.module.js';
+import { PlansModule } from './plans/plans.module.js';
 
 @Module({
   imports: [
@@ -20,6 +26,7 @@ import { PublicOrderingModule } from './public-ordering/public-ordering.module.j
       isGlobal: true,
     }),
     PrismaModule,
+    PlansModule,
     MenuModule,
     OrdersModule,
     AuthModule,
@@ -30,6 +37,11 @@ import { PublicOrderingModule } from './public-ordering/public-ordering.module.j
     PlatformAdminModule,
     ReportsModule,
     PublicOrderingModule,
+    AuditModule,
+    UploadsModule,
+    InventoryModule,
+    ShiftsModule,
+    GamesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

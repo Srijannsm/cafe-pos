@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MenuService } from './menu.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { OrdersGateway } from '../orders/orders.gateway.js';
 
 const CAFE_ID = 1;
 
@@ -14,8 +15,11 @@ function createMockPrisma() {
       create: vi.fn(),
       update: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({ _max: { sortOrder: 2 } }),
     },
     menuCategory: {
+      aggregate: vi.fn().mockResolvedValue({ _max: { sortOrder: 2 } }),
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn(),
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -41,7 +45,11 @@ describe('MenuService', () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [MenuService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        MenuService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: OrdersGateway, useValue: { emitCafe: vi.fn(), emitFloorChanged: vi.fn() } },
+      ],
     }).compile();
     service = module.get<MenuService>(MenuService);
   });
@@ -51,11 +59,13 @@ describe('MenuService', () => {
   });
 
   describe('findAll', () => {
-    it('returns only available items ordered by category', async () => {
+    // Sold-out items are returned too (shown greyed out on the waiter screen);
+    // only hidden categories are filtered away.
+    it('returns items from visible categories, sold-out ones included', async () => {
       prisma.menuItem.findMany.mockResolvedValue([{ id: 1, name: 'Latte' }]);
       const result = await service.findAll(CAFE_ID);
       expect(prisma.menuItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: { cafeId: CAFE_ID, isAvailable: true },
+        where: { cafeId: CAFE_ID, category: { isActive: true } },
       }));
       expect(result).toHaveLength(1);
     });
@@ -109,8 +119,9 @@ describe('MenuService', () => {
 
       await service.adjustStock(CAFE_ID, 1, { delta: 5 });
 
+      // Applied atomically in the DB (increment), not read-modify-write.
       expect(prisma.menuItem.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { stockQuantity: 25 } }),
+        expect.objectContaining({ data: { stockQuantity: { increment: 5 } } }),
       );
     });
   });
@@ -120,7 +131,7 @@ describe('MenuService', () => {
       prisma.menuCategory.create.mockResolvedValue({ id: 5, name: 'Desserts', cafeId: CAFE_ID });
       const result = await service.createCategory(CAFE_ID, { name: 'Desserts', sortOrder: 3 });
       expect(prisma.menuCategory.create).toHaveBeenCalledWith({
-        data: { name: 'Desserts', sortOrder: 3, cafeId: CAFE_ID },
+        data: { name: 'Desserts', sortOrder: 3, cafeId: CAFE_ID, parentId: null },
       });
       expect(result.name).toBe('Desserts');
     });

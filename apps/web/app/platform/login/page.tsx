@@ -3,10 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { platformLogin } from "../../../lib/api";
-import { IconKey } from "../../../components/icons";
 import { Button } from "../../../components/ui/Button";
-import { InlineAlert } from "../../../components/ui/InlineAlert";
-import { Input } from "../../../components/ui/Input";
+import { Field, inputClass } from "../../../components/ui/Field";
 
 export default function PlatformLoginPage() {
   const router = useRouter();
@@ -29,36 +27,31 @@ export default function PlatformLoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6">
-      <div className="text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-on-brand">
-          <IconKey className="h-5 w-5" />
-        </div>
-        <h1 className="heading-lg text-ink-primary">Platform admin</h1>
-        <p className="body-md mt-1 text-ink-secondary">Internal only -- sign in to manage cafes.</p>
+    <main className="grid min-h-screen lg:grid-cols-2">
+      <div className="flex items-center justify-center p-6">
+        <form onSubmit={handleSubmit} className="w-full max-w-sm">
+          <h1 className="text-2xl font-semibold">Sign in</h1>
+          <p className="mb-8 mt-1 text-sm text-ink-secondary">Platform admin — internal access only.</p>
+          <div className="space-y-4">
+            <Field label="Username">
+              <input autoFocus autoComplete="username" className={`${inputClass} w-full`} value={username} onChange={(e) => setUsername(e.target.value)} required />
+            </Field>
+            <Field label="Password">
+              <input type="password" autoComplete="current-password" className={`${inputClass} w-full`} value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </Field>
+            {error && <p className="rounded-lg bg-status-danger-tint px-3 py-2 text-sm text-status-danger-ink">{error}</p>}
+            <Button type="submit" className="w-full" loading={submitting} disabled={!username || !password}>Sign in</Button>
+          </div>
+        </form>
       </div>
-
-      <form onSubmit={handleSubmit} className="flex w-72 flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="label-sm text-ink-faint">Username</label>
-          <Input autoFocus value={username} onChange={(e) => setUsername(e.target.value)} required />
+      <div className="hidden flex-col justify-between bg-[#0c111d] p-12 text-white lg:flex">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-lg">☕</span>
+        <div>
+          <p className="text-3xl font-semibold leading-tight">Every cafe on the platform,<br />in one place.</p>
+          <p className="mt-3 max-w-md text-white/60">Onboard new cafes, track trials and renewals, and see who needs a call this week.</p>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="label-sm text-ink-faint">Password</label>
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-
-        {error && <InlineAlert>{error}</InlineAlert>}
-
-        <Button type="submit" disabled={submitting || !username || !password}>
-          {submitting ? "Signing in…" : "Sign in"}
-        </Button>
-      </form>
+        <p className="text-xs text-white/40">Cafe POS · Platform</p>
+      </div>
     </main>
   );
 }

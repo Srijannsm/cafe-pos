@@ -9,7 +9,7 @@ type ToastItem = { id: number; message: string; tone: ToastTone };
 
 const TONE_STYLES: Record<ToastTone, string> = {
   success: "bg-ink-primary text-surface-canvas",
-  error: "bg-status-danger text-on-brand",
+  error: "bg-status-danger text-white",
   warning: "bg-status-warning text-status-warning-ink",
   info: "bg-status-info text-status-info-ink",
 };
@@ -39,13 +39,13 @@ export function useToast() {
   }, []);
 
   const toastContainer = (
-    <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex flex-col items-center gap-2 px-4">
+    <div className="pointer-events-none fixed inset-x-0 top-4 z-[80] flex flex-col items-center gap-2 px-4">
       {toasts.map((t) => {
         const Icon = TONE_ICONS[t.tone];
         return (
           <div
             key={t.id}
-            className={`animate-toast-in pointer-events-auto flex items-center gap-2 rounded-md px-4 py-3 text-sm font-semibold shadow-lg ${TONE_STYLES[t.tone]}`}
+            className={`animate-toast-in pointer-events-auto flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-medium shadow-lg ${TONE_STYLES[t.tone]}`}
           >
             <Icon className="h-4 w-4 shrink-0" />
             {t.message}
