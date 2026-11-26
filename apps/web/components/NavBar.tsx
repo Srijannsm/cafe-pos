@@ -2,23 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { StaffAvatar } from "./ui/StaffAvatar";
 
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, apiFetchJson, type CurrentUser } from "../lib/api";
 import { useCafeSettings, API_BASE } from "../lib/CafeSettingsContext";
 import { IconLogout } from "./icons";
 import { Dropdown } from "./ui/Dropdown";
-
-const AVATAR_TONES = [
-  "bg-avatar-1 text-avatar-1-ink",
-  "bg-avatar-2 text-avatar-2-ink",
-  "bg-avatar-3 text-avatar-3-ink",
-  "bg-avatar-4 text-avatar-4-ink",
-  "bg-avatar-5 text-avatar-5-ink",
-];
-function toneFor(id: number) {
-  return AVATAR_TONES[id % AVATAR_TONES.length];
-}
 
 export function NavBar() {
   const pathname = usePathname();
@@ -57,7 +47,7 @@ export function NavBar() {
         : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary"
     }`;
 
-  const cafeName = settings?.name ?? "Cafe POS";
+  const cafeName = settings?.name ?? "Aaramva POS";
   const logoUrl = settings?.logoUrl ? `${API_BASE}${settings.logoUrl}` : null;
 
   return (
@@ -118,9 +108,9 @@ export function NavBar() {
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   onClick={() => setMenuOpen((o) => !o)}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${toneFor(user.id)}`}
+                  className="rounded-full transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
                 >
-                  {user.name.charAt(0).toUpperCase()}
+                  <StaffAvatar id={user.id} name={user.name} avatarUrl={user.avatarUrl} className="h-9 w-9 text-sm" />
                 </button>
               }
               items={[{ label: "Log out", icon: IconLogout, onClick: handleLogout }]}

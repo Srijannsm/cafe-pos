@@ -1,4 +1,4 @@
-# Security Notes — Cafe POS System
+# Security Notes — Aaramva POS
 
 This file tracks security decisions and requirements specific to this project.
 Claude Code should read this before implementing auth, payments, or anything

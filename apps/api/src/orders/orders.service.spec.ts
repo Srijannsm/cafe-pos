@@ -19,10 +19,17 @@ function createMockPrisma() {
       findUniqueOrThrow: vi.fn().mockResolvedValue({ plan: 'starter', subscriptionStatus: 'active' }),
       update: vi.fn().mockResolvedValue({ lastBillNumber: 7 }),
     },
-    order: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
+    order: {
+      findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), findMany: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      // The in-transaction re-read after the row lock; tests set it per case.
+      findUniqueOrThrow: vi.fn(),
+    },
     orderItem: {
       findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(),
       delete: vi.fn(), count: vi.fn().mockResolvedValue(0),
+      // matching unsent lines for the merge check -- none by default
+      findMany: vi.fn().mockResolvedValue([]),
     },
     orderItemModifier: { createMany: vi.fn(), deleteMany: vi.fn() },
     restaurantTable: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -35,6 +42,8 @@ function createMockPrisma() {
     stockItem: { update: vi.fn() },
   };
   prisma.$transaction = vi.fn((cb: (tx: unknown) => unknown) => cb(prisma));
+  // Row locks (SELECT ... FOR UPDATE) -- nothing to return in a unit test.
+  prisma.$queryRaw = vi.fn().mockResolvedValue([]);
   return prisma;
 }
 
@@ -216,10 +225,23 @@ describe('OrdersService', () => {
         orderItems: [line(150, 2)], cafe: cafeBilling(),
       });
       await service.generateBill(CAFE_ID, 1);
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: 1, cafeId: CAFE_ID, status: 'served' }, data: { status: 'billed' } });
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 1 },
         data: expect.objectContaining({ status: 'billed', billNumber: 7, total: D(300) }),
       });
+    });
+  });
+
+  describe('generateBill race', () => {
+    it('refuses when another request already billed it (no bill number taken)', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 1, status: 'served', billNumber: null, discountType: null, discountValue: null, payments: [],
+        orderItems: [line(150, 2)], cafe: cafeBilling(),
+      });
+      prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.generateBill(CAFE_ID, 1)).rejects.toThrow(BadRequestException);
+      expect(prisma.cafe.update).not.toHaveBeenCalled();
     });
   });
 
@@ -229,9 +251,13 @@ describe('OrdersService', () => {
       payments: paid.map((a) => ({ amount: D(a) })), orderItems: [{ menuItemId: 5, quantity: 1, voidedAt: null }],
       cafe: { inventoryEnabled: true, plan: 'standard', subscriptionStatus: 'active' },
     });
+    const pay = (paid: number[] = []) => {
+      prisma.order.findFirst.mockResolvedValue(billed(paid));
+      prisma.order.findUniqueOrThrow.mockResolvedValue(billed(paid));
+    };
 
     it('takes a partial payment without closing the order', async () => {
-      prisma.order.findFirst.mockResolvedValue(billed());
+      pay();
       const r = await service.addPayment(CAFE_ID, 1, { method: 'cash', amount: 400 } as any, CASHIER);
       expect(r.fullyPaid).toBe(false);
       expect(r.remaining).toBe('600.00');
@@ -239,7 +265,7 @@ describe('OrdersService', () => {
     });
 
     it('closes the order, frees the table and does not touch menu stock again', async () => {
-      prisma.order.findFirst.mockResolvedValue(billed([400]));
+      pay([400]);
       const r = await service.addPayment(CAFE_ID, 1, { method: 'fonepay_qr', amount: 600 } as any, CASHIER);
       expect(r.fullyPaid).toBe(true);
       expect(prisma.order.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { status: 'paid' } });
@@ -247,13 +273,21 @@ describe('OrdersService', () => {
       expect(prisma.menuItem.update).not.toHaveBeenCalled();
     });
 
+    it('re-checks inside the transaction (a payment that landed meanwhile counts)', async () => {
+      prisma.order.findFirst.mockResolvedValue(billed());
+      prisma.order.findUniqueOrThrow.mockResolvedValue(billed([1000]));
+      await expect(service.addPayment(CAFE_ID, 1, { method: 'cash', amount: 1000 } as any, CASHIER)).rejects.toThrow(BadRequestException);
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    });
+
     it('rejects paying more than what is left', async () => {
-      prisma.order.findFirst.mockResolvedValue(billed([900]));
+      pay([900]);
       await expect(service.addPayment(CAFE_ID, 1, { method: 'cash', amount: 200 } as any, CASHIER)).rejects.toThrow(BadRequestException);
     });
 
     it('deducts recipe ingredients once fully paid', async () => {
-      prisma.order.findFirst.mockResolvedValue(billed());
+      pay();
       prisma.recipeLine.findMany.mockResolvedValue([{ menuItemId: 5, stockItemId: 9, quantity: D(18), stockItem: { avgCost: D(2) } }]);
       await service.addPayment(CAFE_ID, 1, { method: 'cash', amount: 1000 } as any, CASHIER);
       expect(prisma.stockMovement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ stockItemId: 9, type: 'sale' }) });
@@ -298,6 +332,39 @@ describe('OrdersService', () => {
       await expect(
         service.applyDiscount(CAFE_ID, 1, { type: 'percent', value: 50, reason: 'friend' } as any, CASHIER),
       ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('listBills', () => {
+    const row = (id: number) => ({
+      id, billNumber: id + 100, status: 'paid', source: 'staff', orderType: 'dine_in',
+      total: D(500), discountAmount: null, printCount: 1, createdAt: new Date(),
+      table: { tableNumber: '4' }, waiter: { name: 'Sita' },
+      payments: [{ method: 'cash', amount: D(500), paidAt: new Date() }],
+    });
+
+    it('only lists billed orders of this cafe, and matches a number as bill no., order no. or table', async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      await service.listBills(CAFE_ID, { q: '#42' });
+      const where = prisma.order.findMany.mock.calls[0][0].where;
+      expect(where.cafeId).toBe(CAFE_ID);
+      expect(where.billNumber).toEqual({ not: null });
+      expect(where.OR).toEqual([
+        { billNumber: 42 },
+        { id: 42 },
+        { table: { tableNumber: { equals: '42', mode: 'insensitive' } } },
+      ]);
+    });
+
+    it('returns a cursor only when there is another page', async () => {
+      prisma.order.findMany.mockResolvedValue([row(9), row(8), row(7)]);
+      const res = await service.listBills(CAFE_ID, { take: 2 });
+      expect(res.bills.map((b) => b.id)).toEqual([9, 8]);
+      expect(res.nextBefore).toBe(8);
+      expect(res.bills[0]).toMatchObject({ billNumber: 109, paid: '500.00', methods: ['cash'], table: '4' });
+
+      prisma.order.findMany.mockResolvedValue([row(3)]);
+      expect((await service.listBills(CAFE_ID, { take: 2 })).nextBefore).toBeNull();
     });
   });
 });

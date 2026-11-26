@@ -5,6 +5,7 @@ import { AddOrderDto } from './dto/add-item.dto.js';
 import { AddPaymentDto, RecordPaymentDto } from './dto/record-payment.dto.js';
 import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
 import { ApplyDiscountDto } from './dto/billing.dto.js';
+import { ListBillsDto } from './dto/list-bills.dto.js';
 import { Prisma, OrderStatus, OrderSource } from '../generated/prisma/client.js';
 import { OrdersGateway } from './orders.gateway.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -138,6 +139,15 @@ export class OrdersService {
     }
 
     const order = await this.prisma.$transaction(async (tx) => {
+      // Lock the table row so two waiters tapping the same free table at once
+      // can't both open an order on it -- the second waits, then sees the first.
+      await tx.$queryRaw`SELECT id FROM restaurant_tables WHERE id = ${dto.tableId} FOR UPDATE`;
+      const active = await tx.order.findFirst({
+        where: { tableId: dto.tableId, status: { notIn: ['paid', 'cancelled'] } },
+        select: { id: true },
+      });
+      if (active) throw new BadRequestException(`Table ${table.tableNumber} is not free`);
+
       const created = await tx.order.create({
         data: {
           cafeId,
@@ -202,7 +212,14 @@ export class OrdersService {
       throw new BadRequestException('One of the selected options does not belong to this item');
     }
 
+    const note = dto.note?.trim() || null;
+    const modKey = [...modifierIds].sort((a, b) => a - b).join(',');
+
     const result = await this.prisma.$transaction(async (tx) => {
+      // Serialise adds on this order so two quick taps can't both decide
+      // "no matching line yet" and create duplicates.
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+
       // Re-check finished-goods stock inside the transaction (see CLAUDE.md
       // "Inventory tracking") so two waiters can't both take the last one.
       if (menuItem.trackStock) {
@@ -218,6 +235,29 @@ export class OrdersService {
         });
       }
 
+      // Tapping "French Toast" three times should give one line "3x French
+      // Toast", not three "1x" lines -- on the cart, the kitchen ticket and
+      // the bill. Only merge into a line that is identical in every way that
+      // matters: same item, same price snapshot, same options, same note, and
+      // not yet sent (a round the kitchen already has is never changed).
+      const candidates = await tx.orderItem.findMany({
+        where: { orderId, menuItemId: dto.menuItemId, sentToKitchen: false, voidedAt: null, note, price: menuItem.price },
+        include: { orderItemModifiers: { select: { modifierId: true } } },
+      });
+      const same = candidates.find(
+        (c) => c.orderItemModifiers.map((m) => m.modifierId).sort((a, b) => a - b).join(',') === modKey,
+      );
+      if (same) {
+        await tx.orderItem.update({ where: { id: same.id }, data: { quantity: { increment: dto.quantity } } });
+        if (order.status === 'served') {
+          await tx.order.update({ where: { id: orderId }, data: { status: 'pending' } });
+        }
+        return tx.orderItem.findUnique({
+          where: { id: same.id },
+          include: { orderItemModifiers: { include: { modifier: true } } },
+        });
+      }
+
       const orderItem = await tx.orderItem.create({
         data: {
           orderId,
@@ -225,7 +265,7 @@ export class OrdersService {
           quantity: dto.quantity,
           price: menuItem.price, // snapshot the CURRENT price at order time
           station: menuItem.station, // snapshot so moving an item to another station later doesn't reroute old tickets
-          note: dto.note?.trim() || null,
+          note,
         },
       });
 
@@ -274,9 +314,10 @@ export class OrdersService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // One timestamp for the whole batch = one "round" on the kitchen screen.
       await tx.orderItem.updateMany({
         where: { id: { in: pendingItems.map((i) => i.id) } },
-        data: { sentToKitchen: true },
+        data: { sentToKitchen: true, sentAt: new Date() },
       });
       return tx.order.update({ where: { id: orderId }, data: { status: 'preparing' } });
     });
@@ -304,7 +345,7 @@ export class OrdersService {
 
     const updated = await this.prisma.orderItem.update({
       where: { id: orderItemId },
-      data: { status: 'ready' },
+      data: { status: 'ready', readyAt: new Date() },
     });
 
     this.ordersGateway.emitOrderItemReady(cafeId, { orderId: updated.orderId, orderItemId: updated.id });
@@ -320,7 +361,7 @@ export class OrdersService {
     if (!orderItem || orderItem.status !== 'ready') {
       throw new BadRequestException('Only a ready item on an open ticket can be recalled');
     }
-    const updated = await this.prisma.orderItem.update({ where: { id: orderItemId }, data: { status: 'pending' } });
+    const updated = await this.prisma.orderItem.update({ where: { id: orderItemId }, data: { status: 'pending', readyAt: null } });
     this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.orderId });
     return updated;
   }
@@ -519,6 +560,13 @@ export class OrdersService {
     // ever share a number even under concurrent requests. A reopened bill
     // keeps its original number (it's the same bill, re-issued).
     const billed = await this.prisma.$transaction(async (tx) => {
+      // Only one request can move served -> billed. Without this, three quick
+      // taps each took a new bill number and left gaps in the sequence
+      // (sequential bill numbers matter for tax records).
+      const claimed = await tx.order.updateMany({ where: { id: orderId, cafeId, status: 'served' }, data: { status: 'billed' } });
+      if (claimed.count === 0) {
+        throw new BadRequestException('This bill was just generated -- refresh to see it');
+      }
       let billNumber = order.billNumber;
       if (billNumber == null) {
         const updatedCafe = await tx.cafe.update({
@@ -616,19 +664,28 @@ export class OrdersService {
       throw new BadRequestException('Generate the bill before taking payment');
     }
 
-    const paidSoFar = order.payments.reduce((s, p) => s.plus(p.amount), ZERO);
-    const remaining = order.total.minus(paidSoFar);
     const amount = D(dto.amount);
-    if (amount.gt(remaining.plus(0.001))) {
-      throw new BadRequestException(`Only Rs ${remaining.toFixed(2)} is left to pay on this bill`);
-    }
-
     const openShift = await this.prisma.shift.findFirst({
       where: { cafeId, closedAt: null },
       select: { id: true },
     });
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // Lock this order's row, then re-read status and payments. Two cashiers
+      // (or one double-tap) paying at the same moment now queue up here, and
+      // the second one sees the first payment -- before this, both passed the
+      // "how much is left" check and the bill got paid twice.
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+      const fresh = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { status: true, total: true, payments: { select: { amount: true } } } });
+      if (fresh.status !== 'billed' || !fresh.total) {
+        throw new BadRequestException(fresh.status === 'paid' ? 'This bill is already paid' : 'Generate the bill before taking payment');
+      }
+      const paidSoFar = fresh.payments.reduce((s, p) => s.plus(p.amount), ZERO);
+      const remaining = fresh.total.minus(paidSoFar);
+      if (amount.gt(remaining.plus(0.001))) {
+        throw new BadRequestException(`Only Rs ${remaining.toFixed(2)} is left to pay on this bill`);
+      }
+
       const payment = await tx.payment.create({
         data: {
           orderId,
@@ -640,7 +697,7 @@ export class OrdersService {
         },
       });
 
-      const fullyPaid = paidSoFar.plus(amount).gte(order.total!.minus(0.001));
+      const fullyPaid = paidSoFar.plus(amount).gte(fresh.total.minus(0.001));
       if (fullyPaid) {
         await tx.order.update({ where: { id: orderId }, data: { status: 'paid' } });
         await tx.restaurantTable.update({ where: { id: order.tableId }, data: { status: 'free' } });
@@ -701,6 +758,52 @@ export class OrdersService {
 
   // Removing an item the kitchen hasn't seen yet is just a correction --
   // the row is deleted. Once it reached the kitchen, use voidItem instead.
+  /**
+   * +/- on a line that hasn't gone to the kitchen yet (cart stepper, and
+   * "Undo" after adding). Reaching 0 removes the line. Tracked stock moves
+   * with it. Sent lines can't change -- those need a void with a reason.
+   */
+  async changeQuantity(cafeId: number, orderItemId: number, delta: number) {
+    const line = await this.prisma.orderItem.findFirst({
+      where: { id: orderItemId, order: { cafeId } },
+      include: { order: { select: { id: true, status: true } }, menuItem: true },
+    });
+    if (!line) throw new NotFoundException(`Order item ${orderItemId} does not exist`);
+    if (line.sentToKitchen || line.voidedAt || !['pending', 'preparing', 'served'].includes(line.order.status)) {
+      throw new BadRequestException('This item already reached the kitchen -- void it with a reason instead');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${line.orderId} FOR UPDATE`;
+      const fresh = await tx.orderItem.findUnique({ where: { id: orderItemId } });
+      if (!fresh || fresh.sentToKitchen) {
+        throw new BadRequestException('This item already reached the kitchen -- void it with a reason instead');
+      }
+      const next = fresh.quantity + delta;
+      if (next < 0) throw new BadRequestException('Quantity cannot go below zero');
+      if (next > 99) throw new BadRequestException('That is a lot -- maximum 99 per line');
+
+      if (line.menuItem.trackStock) {
+        if (delta > 0) {
+          const mi = await tx.menuItem.findUniqueOrThrow({ where: { id: line.menuItemId } });
+          if (mi.stockQuantity < delta) throw new BadRequestException(`Only ${mi.stockQuantity} of "${mi.name}" left in stock`);
+          await tx.menuItem.update({ where: { id: line.menuItemId }, data: { stockQuantity: { decrement: delta } } });
+        } else {
+          await tx.menuItem.update({ where: { id: line.menuItemId }, data: { stockQuantity: { increment: -delta } } });
+        }
+      }
+
+      if (next === 0) {
+        await tx.orderItemModifier.deleteMany({ where: { orderItemId } });
+        await tx.orderItem.delete({ where: { id: orderItemId } });
+        return null;
+      }
+      return tx.orderItem.update({ where: { id: orderItemId }, data: { quantity: next } });
+    });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    return { removed: updated === null, quantity: updated?.quantity ?? 0 };
+  }
+
   async removeItem(cafeId: number, orderItemId: number) {
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: orderItemId, order: { cafeId } },
@@ -778,6 +881,73 @@ export class OrdersService {
     this.ordersGateway.emitCafe(cafeId, 'order.itemVoided', { orderId: orderItem.orderId, orderItemId });
     this.ordersGateway.emitFloorChanged(cafeId);
     return voided;
+  }
+
+  /**
+   * Bills = orders that have had a bill generated (billNumber set). Newest
+   * first, keyset-paginated by id so "Load more" stays fast on a busy cafe.
+   */
+  async listBills(cafeId: number, f: ListBillsDto) {
+    const take = f.take ?? 30;
+    const tz = f.tz ?? 345;
+    const where: Prisma.OrderWhereInput = { cafeId, billNumber: { not: null } };
+
+    if (f.status === 'paid') where.status = 'paid';
+    else if (f.status === 'cancelled') where.status = 'cancelled';
+    else if (f.status === 'unpaid') where.status = { notIn: ['paid', 'cancelled'] };
+
+    // Local calendar day -> UTC instant: midnight local is (midnight UTC - tz).
+    const dayStart = (d: string) => new Date(Date.parse(`${d.slice(0, 10)}T00:00:00Z`) - tz * 60000);
+    if (f.from || f.to) {
+      where.createdAt = {
+        ...(f.from ? { gte: dayStart(f.from) } : {}),
+        ...(f.to ? { lt: new Date(dayStart(f.to).getTime() + 86400000) } : {}),
+      };
+    }
+
+    const q = f.q?.trim().replace(/^#/, '');
+    if (q) {
+      const n = /^\d+$/.test(q) ? Number(q) : null;
+      where.OR = [
+        ...(n !== null ? [{ billNumber: n }, { id: n }] : []),
+        { table: { tableNumber: { equals: q, mode: 'insensitive' as const } } },
+      ];
+    }
+
+    const rows = await this.prisma.order.findMany({
+      where: { ...where, ...(f.before ? { id: { lt: f.before } } : {}) },
+      orderBy: { id: 'desc' },
+      take: take + 1,
+      select: {
+        id: true, billNumber: true, status: true, source: true, orderType: true,
+        total: true, discountAmount: true, printCount: true, createdAt: true,
+        table: { select: { tableNumber: true } },
+        waiter: { select: { name: true } },
+        payments: { select: { method: true, amount: true, paidAt: true }, orderBy: { paidAt: 'asc' } },
+      },
+    });
+
+    const hasMore = rows.length > take;
+    const page = rows.slice(0, take).map((o) => {
+      const paid = o.payments.reduce((s, p) => s.plus(p.amount), new Prisma.Decimal(0));
+      return {
+        id: o.id,
+        billNumber: o.billNumber,
+        status: o.status,
+        source: o.source,
+        orderType: o.orderType,
+        table: o.table.tableNumber,
+        waiter: o.waiter?.name ?? (o.source === 'qr' ? 'QR order' : null),
+        total: o.total?.toFixed(2) ?? null,
+        paid: paid.toFixed(2),
+        discount: o.discountAmount?.toFixed(2) ?? null,
+        methods: [...new Set(o.payments.map((p) => p.method))],
+        printCount: o.printCount,
+        createdAt: o.createdAt,
+        paidAt: o.payments.at(-1)?.paidAt ?? null,
+      };
+    });
+    return { bills: page, nextBefore: hasMore ? page.at(-1)!.id : null };
   }
 
   async findOne(cafeId: number, orderId: number) {

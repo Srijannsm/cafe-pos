@@ -221,6 +221,8 @@ model User {
   pinHash  String
   role     Role
   isActive Boolean @default(true)
+  // Profile photo, shown on the login screen and in the app bar.
+  avatarUrl String?
 
   cafe   Cafe    @relation(fields: [cafeId], references: [id])
   orders Order[]
@@ -391,6 +393,10 @@ model OrderItem {
   note            String?
   station         Station         @default(kitchen)
   createdAt       DateTime        @default(now())
+  // Kitchen timing. Items sent together share one sentAt -- that's a
+  // "round" (its own KDS ticket). readyAt - sentAt is the cook time.
+  sentAt          DateTime?
+  readyAt         DateTime?
 
   // Void (item removed after it reached the kitchen). The row is kept --
   // never deleted -- so the kitchen sees the strike-through and the

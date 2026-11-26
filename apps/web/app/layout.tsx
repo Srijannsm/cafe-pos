@@ -27,14 +27,14 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "Cafe POS",
-  description: "Cafe POS system",
+  title: { default: "Aaramva POS", template: "%s · Aaramva POS" },
+  description: "Aaramva POS — orders, kitchen and billing for cafes and restaurants.",
   manifest: "/manifest.json",
-  applicationName: "Cafe POS",
+  applicationName: "Aaramva POS",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Cafe POS",
+    title: "Aaramva POS",
   },
   icons: {
     icon: [

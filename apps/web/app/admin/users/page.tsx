@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiFetchJson } from "../../../lib/api";
+import { apiFetchJson, getCurrentUser } from "../../../lib/api";
+import { uploadImage } from "../../../lib/upload";
+import { StaffAvatar } from "../../../components/ui/StaffAvatar";
+import { useImageCropper } from "../../../components/ui/ImageCropper";
 import { useToast } from "../../../components/Toast";
-import { IconUsers, IconEdit, IconCheck, IconX, IconKey } from "../../../components/icons";
+import { IconUsers, IconEdit, IconCheck, IconX, IconKey, IconImage } from "../../../components/icons";
 import { SectionCard } from "../_components/SectionCard";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -19,21 +22,10 @@ type StaffRow = {
   name: string;
   role: Role;
   isActive: boolean;
+  avatarUrl: string | null;
 };
 
 const ROLES: Role[] = ["admin", "cashier", "waiter"];
-
-const AVATAR_TONES = [
-  "bg-avatar-1 text-avatar-1-ink",
-  "bg-avatar-2 text-avatar-2-ink",
-  "bg-avatar-3 text-avatar-3-ink",
-  "bg-avatar-4 text-avatar-4-ink",
-  "bg-avatar-5 text-avatar-5-ink",
-];
-
-function toneFor(id: number) {
-  return AVATAR_TONES[id % AVATAR_TONES.length];
-}
 
 function roleLabel(role: Role) {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -41,6 +33,7 @@ function roleLabel(role: Role) {
 
 export default function UsersManagementPage() {
   const { showToast, toastHost } = useToast();
+  const { crop, cropDialog } = useImageCropper();
 
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +100,42 @@ export default function UsersManagementPage() {
     }
   }
 
+  const [photoBusyId, setPhotoBusyId] = useState<number | null>(null);
+
+  // Upload (or remove, with file = null) a staff photo. The browser crops it
+  // to a square and shrinks it before upload, so a 5 MB phone photo becomes
+  // a ~20 KB avatar.
+  async function handlePhoto(user: StaffRow, file: File | null) {
+    try {
+      let avatarUrl: string | null = null;
+      if (file) {
+        const area = await crop(file, { aspect: 1, round: true, title: `Photo for ${user.name}`, hint: "Shown on the PIN login screen and in the app bar." });
+        if (!area) return;
+        setPhotoBusyId(user.id);
+        avatarUrl = await uploadImage(file, "staff", 1, 256, area);
+      } else {
+        setPhotoBusyId(user.id);
+      }
+      await apiFetchJson(`/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarUrl }),
+      });
+      // If you changed your own photo, update the copy the app bar reads.
+      const me = getCurrentUser();
+      if (me?.id === user.id) {
+        localStorage.setItem("currentUser", JSON.stringify({ ...me, avatarUrl }));
+        window.dispatchEvent(new Event("currentuser-change"));
+      }
+      await refreshAll();
+      showToast(file ? `Photo updated for "${user.name}"` : `Photo removed for "${user.name}"`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not update the photo", "error");
+    } finally {
+      setPhotoBusyId(null);
+    }
+  }
+
   async function handleToggleActive(user: StaffRow) {
     try {
       await apiFetchJson(`/users/${user.id}`, {
@@ -145,6 +174,7 @@ export default function UsersManagementPage() {
   return (
     <div className="space-y-8">
       {toastHost}
+      {cropDialog}
       <PageHeader
         title="Staff & PINs"
         description="Add staff, change roles, or reset a PIN. Deactivating removes someone from the login screen without deleting their order history."
@@ -183,7 +213,7 @@ export default function UsersManagementPage() {
         </form>
       </SectionCard>
 
-      <SectionCard icon={<IconUsers />} title="Existing staff" description="Search, edit roles, or reset a PIN.">
+      <SectionCard icon={<IconUsers />} title="Existing staff" description="Search, edit roles, or reset a PIN. Tap someone's photo circle to add or change their picture.">
         <DataTable
           columns={[
             { header: "Name", skeletonWidth: "w-28" },
@@ -227,18 +257,53 @@ export default function UsersManagementPage() {
               <>
                 <td className="py-4 pr-4">
                   <div className="flex items-center gap-3">
-                    <span
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full label-sm font-semibold ${toneFor(user.id)}`}
+                    <label
+                      className="group relative shrink-0 cursor-pointer rounded-full focus-within:ring-2 focus-within:ring-brand"
+                      title={user.avatarUrl ? "Change photo" : "Add photo"}
                     >
-                      {user.name.charAt(0).toUpperCase()}
-                    </span>
-                    {isEditing ? (
-                      <Input
-                        autoFocus
-                        className="w-40"
-                        value={draft.name}
-                        onChange={(e) => setDrafts((cur) => ({ ...cur, [user.id]: { ...draft, name: e.target.value } }))}
+                      <StaffAvatar id={user.id} name={user.name} avatarUrl={user.avatarUrl} className="h-10 w-10 text-sm" />
+                      <span
+                        className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-white transition ${
+                          photoBusyId === user.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        }`}
+                      >
+                        {photoBusyId === user.id ? (
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        ) : (
+                          <IconImage className="h-4 w-4" />
+                        )}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="sr-only"
+                        aria-label={`Upload a photo for ${user.name}`}
+                        disabled={photoBusyId !== null}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = "";
+                          if (f) void handlePhoto(user, f);
+                        }}
                       />
+                    </label>
+                    {isEditing ? (
+                      <div className="flex flex-col gap-1">
+                        <Input
+                          autoFocus
+                          className="w-40"
+                          value={draft.name}
+                          onChange={(e) => setDrafts((cur) => ({ ...cur, [user.id]: { ...draft, name: e.target.value } }))}
+                        />
+                        {user.avatarUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handlePhoto(user, null)}
+                            className="self-start text-xs font-medium text-ink-faint hover:text-status-danger-ink"
+                          >
+                            Remove photo
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <span className="body-md font-medium text-ink-primary">{user.name}</span>
                     )}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { platformLogout } from "../../lib/api";
 import { IconGrid, IconStore, IconPlus, IconMenu, IconLogout, IconChevronDown, IconX, IconCalendar, IconTag } from "../icons";
+import { BrandLogo } from "../brand/Brand";
 
 const NAV = [
   { label: "Overview", href: "/platform", icon: IconGrid },
@@ -40,10 +41,9 @@ export function PlatformShell({ username, children }: { username: string; childr
       {mobileOpen && <button type="button" aria-label="Close menu" className="fixed inset-0 z-40 bg-overlay-backdrop lg:hidden" onClick={() => setMobileOpen(false)} />}
       <aside className={`fixed left-0 top-0 z-50 flex h-screen w-[260px] flex-col bg-[#0c111d] px-4 text-white transition-transform lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-3 px-2 py-6">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-sm font-bold text-[#0c111d]">☕</span>
           <div className="flex-1">
-            <p className="text-sm font-semibold">Cafe POS</p>
-            <p className="text-[11px] uppercase tracking-widest text-white/50">Platform</p>
+            <BrandLogo onDark className="h-8 w-auto" />
+            <p className="mt-1.5 pl-[42px] text-[11px] uppercase tracking-widest text-white/50">Platform</p>
           </div>
           <button type="button" aria-label="Close" className="rounded-lg p-1.5 text-white/60 lg:hidden" onClick={() => setMobileOpen(false)}><IconX className="h-5 w-5" /></button>
         </div>

@@ -183,7 +183,7 @@ function OnboardDrawer({ open, onClose, onCreated, onError }: { open: boolean; o
   }
 
   const welcome = created
-    ? `Welcome to Cafe POS, ${created.name}! 🎉\n\nStaff login: ${loginUrl(created.slug)}\nAdmin: ${created.admin}\nPIN: ${created.pin}\n\nStart in Admin → Menu, then Tables & QR to print your table QR codes.`
+    ? `Welcome to Aaramva POS, ${created.name}! 🎉\n\nStaff login: ${loginUrl(created.slug)}\nAdmin: ${created.admin}\nPIN: ${created.pin}\n\nStart in Admin → Menu, then Tables & QR to print your table QR codes.`
     : "";
 
   return (

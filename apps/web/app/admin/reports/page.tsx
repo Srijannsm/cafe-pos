@@ -144,7 +144,7 @@ export default function ReportsPage() {
           {tab === "items" && <Items d={data} csv={(k: "items" | "categories") => downloadCsv(fname(k), data[k])} />}
           {tab === "staff" && <StaffReport d={data} csv={() => downloadCsv(fname("staff"), data.waiters)} />}
           {tab === "bills" && <Bills rows={data} csv={() => downloadCsv(fname("sales-register"), data)} />}
-          {tab === "exceptions" && <Exceptions d={data} csv={() => downloadCsv(fname("discounts-voids"), data.log.map((l: any) => ({ time: l.at, staff: l.actor, action: ACTION_LABEL[l.action] ?? l.action, ref: l.entityId, details: JSON.stringify(l.details) })))} />}
+          {tab === "exceptions" && <Exceptions d={data} csv={() => downloadCsv(fname("discounts-voids"), data.log.map((l: { at: string; actor: string | null; action: string; entityId: number | null; details: unknown }) => ({ time: l.at, staff: l.actor, action: ACTION_LABEL[l.action] ?? l.action, ref: l.entityId, details: JSON.stringify(l.details) })))} />}
           {tab === "purchases" && <Purchases d={data} csv={(k: string) => downloadCsv(fname(k), data[k])} />}
           {tab === "stock" && <Stock d={data} csv={() => downloadCsv(fname("stock"), data.items)} />}
           {tab === "profit" && <Profit d={data} />}

@@ -4,6 +4,7 @@ import { TRIAL_DAYS, allPlans, cyclePrice, effectivePlan, getPlan, serializePlan
 import { UpdateCafeSettingsDto } from './dto/update-cafe-settings.dto.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IMAGE_EXT_BY_MIME } from '../uploads/image-check.js';
 
 
 const SETTINGS_SELECT = {
@@ -39,7 +40,7 @@ export class CafesService {
     const cafe = await this.findBySlugOrThrow(slug);
     return this.prisma.user.findMany({
       where: { cafeId: cafe.id, isActive: true },
-      select: { id: true, name: true, role: true },
+      select: { id: true, name: true, role: true, avatarUrl: true },
     });
   }
 
@@ -69,8 +70,8 @@ export class CafesService {
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'logos');
     fs.mkdirSync(uploadsDir, { recursive: true });
 
-    const rawExt = path.extname(file.originalname).toLowerCase();
-    const ext = (rawExt === '.jfif' || rawExt === '.jpeg') ? '.jpg' : (rawExt || '.jpg');
+    // Extension from the verified type, never from the uploaded file name.
+    const ext = IMAGE_EXT_BY_MIME[file.mimetype] ?? '.jpg';
     const filename = `cafe-${cafeId}-${Date.now()}${ext}`;
     const filePath = path.join(uploadsDir, filename);
     fs.writeFileSync(filePath, file.buffer);

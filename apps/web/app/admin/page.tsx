@@ -10,7 +10,7 @@ import { StatCard, StatSkeleton } from "../../components/ui/StatCard";
 import { Button } from "../../components/ui/Button";
 import { IconBanknote, IconReceipt, IconTable, IconWallet, IconChevronRight, IconPlus, IconTruck, IconBarChart, IconBox } from "../../components/icons";
 import { BarChart } from "../../components/admin/charts";
-import { localDay, addDays, num, rs, timeAgo, ago } from "../../lib/format";
+import { localDay, addDays, num, rs, timeAgo, ago, tableLabel } from "../../lib/format";
 import type { ShiftSummary } from "../../components/admin/cash";
 import type { StockItem } from "../../components/admin/inventory";
 
@@ -62,7 +62,7 @@ export default function AdminDashboard() {
         <div className="flex flex-wrap gap-2">
           <Link href="/admin/menu"><Button variant="secondary" icon={<IconPlus />}>Menu item</Button></Link>
           {settings?.inventoryEnabled !== false && <Link href="/admin/inventory/purchases"><Button variant="secondary" icon={<IconTruck />}>Stock in</Button></Link>}
-          <Link href="/"><Button icon={<IconTable />}>Open floor</Button></Link>
+          <Link href="/"><Button icon={<IconTable />}>Open tables</Button></Link>
         </div>
       </div>
 
@@ -70,7 +70,7 @@ export default function AdminDashboard() {
         {today ? (
           <>
             <StatCard icon={<IconBanknote />} label="Sales today" value={rs(today.summary.collected)} caption={`${today.summary.bills} bills · avg ${rs(today.summary.avgBill)}`} />
-            <StatCard icon={<IconTable />} label="Open tables" value={`${occupied.length} / ${tables.filter((t) => t.status !== "reserved").length}`} caption={occupied.length ? `${rs(openTotal)} still on tables` : "Floor is quiet"} />
+            <StatCard icon={<IconTable />} label="Open tables" value={`${occupied.length} / ${tables.filter((t) => t.status !== "reserved").length}`} caption={occupied.length ? `${rs(openTotal)} still on tables` : "No tables open"} />
             <StatCard icon={<IconReceipt />} label="Discounts & voids" value={rs(Number(today.summary.discounts) + Number(today.summary.voidAmount))} caption={`${today.summary.voidCount} voided items`} captionTone={today.summary.voidCount ? "warning" : undefined} />
             <StatCard icon={<IconWallet />} label="Cash drawer" value={shift ? rs(shift.expectedCash) : "Closed"} caption={shift ? `Open since ${ago(shift.openedAt)}` : "Open a shift to track cash"} captionTone={shift ? undefined : "warning"} />
           </>
@@ -118,7 +118,7 @@ export default function AdminDashboard() {
       <div className="grid gap-6 xl:grid-cols-3">
         <Panel className="xl:col-span-2">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-base font-semibold">Live floor</h3>
+            <h3 className="text-base font-semibold">Live tables</h3>
             <Link href="/" className="flex items-center gap-1 text-sm font-medium text-brand-strong">Open <IconChevronRight className="h-4 w-4" /></Link>
           </div>
           {occupied.length === 0 ? <p className="text-sm text-ink-faint">No open tables.</p> : (
@@ -126,7 +126,7 @@ export default function AdminDashboard() {
               {occupied.map((t) => (
                 <div key={t.id} className="rounded-xl border border-border-subtle p-3">
                   <div className="flex items-center justify-between">
-                    <p className="font-semibold">T{t.tableNumber}</p>
+                    <p className="font-semibold">{tableLabel(t.tableNumber)}</p>
                     {t.requests.length > 0 ? <Pill tone="danger">Calling</Pill> : t.unsentCount > 0 ? <Pill tone="warning">New</Pill> : <Pill tone="info">{t.activeOrderStatus}</Pill>}
                   </div>
                   <p className="tabular mt-2 text-sm font-medium">{rs(t.runningTotal)}</p>

@@ -11,6 +11,7 @@ import { Sheet, Stepper } from "../../../../components/ui/Sheet";
 import { Skeleton } from "../../../../components/ui/Skeleton";
 import { IconHand, IconReceipt, IconWifi, IconSearch, IconX, IconGamepad, IconCheckCircle, IconPhone } from "../../../../components/icons";
 import { DICT, type Lang } from "./i18n";
+import { PoweredBy } from "../../../../components/brand/Brand";
 
 type Mod = { id: number; name: string; priceDelta: string };
 type Item = { id: number; name: string; price: string; description: string | null; imageUrl: string | null; tags: string[]; categoryId: number; isAvailable: boolean; modifiers: Mod[] };
@@ -98,7 +99,7 @@ export default function QrMenu({ params }: { params: Promise<{ qrToken: string }
     return () => clearInterval(id);
   }, [data?.activeOrder?.id, qrToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const items = data?.menu ?? [];
+  const items = useMemo(() => data?.menu ?? [], [data]);
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const tops = useMemo(() => (data?.categories ?? []).filter((c) => c.parentId == null), [data]);
   const sections = useMemo(() => {
@@ -114,6 +115,12 @@ export default function QrMenu({ params }: { params: Promise<{ qrToken: string }
         if (list.length) out.push({ key: `c${sub.id}`, title: top.name, sub: sub.name, items: list });
       }
     }
+    // Safety net: items whose category doesn't lead to a visible top-level
+    // category (e.g. a sub-category whose parent was hidden) would otherwise
+    // silently vanish from the customer menu.
+    const shown = new Set(out.filter((x) => x.key !== "popular").flatMap((x) => x.items.map((i) => i.id)));
+    const orphans = items.filter((i) => !shown.has(i.id));
+    if (orphans.length) out.push({ key: "more", title: t("more"), items: orphans });
     return out;
   }, [data, items, tops, byId, t]);
 
@@ -269,6 +276,21 @@ export default function QrMenu({ params }: { params: Promise<{ qrToken: string }
         )}
       </header>
 
+      {/* Before the first order there's no order card to hang the game on,
+          so offer it on its own -- it's often what a table does first. */}
+      {!(ao && ao.items.length > 0) && c.gamesEnabled && (
+        <div className="px-4 pt-3">
+          <button type="button" onClick={() => setGameOpen(true)} className="flex w-full items-center gap-3 rounded-2xl bg-brand p-4 text-left text-on-brand">
+            <IconGamepad className="h-6 w-6 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{t("playNow")}</p>
+              <p className="truncate text-xs opacity-85">{t("playHint")}</p>
+            </div>
+            <span className="text-lg opacity-85">›</span>
+          </button>
+        </div>
+      )}
+
       {/* Active order + play */}
       {ao && ao.items.length > 0 && (
         <div className="space-y-2 px-4 pt-4">
@@ -328,7 +350,12 @@ export default function QrMenu({ params }: { params: Promise<{ qrToken: string }
         {search ? (
           results.length ? <div className={grid ? "grid grid-cols-2 gap-3 pt-4" : "pt-2"}>{results.map(card)}</div> : <p className="py-16 text-center text-sm text-ink-faint">{t("noResults")}</p>
         ) : (
-          sections.map((s) => (
+          sections.length === 0 ? (
+            <div className="py-16 text-center">
+              <p className="text-base font-semibold text-ink-primary">{t("menuEmpty")}</p>
+              <p className="mt-1 text-sm text-ink-secondary">{t("menuEmptyHint")}</p>
+            </div>
+          ) : sections.map((s) => (
             <section key={s.key} ref={(el) => { sectionRefs.current[s.key] = el; }} className="pt-6">
               <h2 className="mb-3 font-display text-lg font-semibold">
                 {s.sub ? <><span className="text-ink-faint">{s.title} · </span>{s.sub}</> : s.title}
@@ -340,6 +367,7 @@ export default function QrMenu({ params }: { params: Promise<{ qrToken: string }
         <footer className="mt-10 space-y-1 text-center text-xs text-ink-faint">
           {c.vatEnabled && <p>{c.pricesIncludeVat ? t("vatIncl") : t("vatExcl")}{c.panNumber ? ` · ${t("pan")} ${c.panNumber}` : ""}</p>}
           {c.address && <p>{c.address}</p>}
+          <PoweredBy className="pt-3" />
         </footer>
       </div>
 

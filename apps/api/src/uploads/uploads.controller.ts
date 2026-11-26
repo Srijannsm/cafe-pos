@@ -4,20 +4,15 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IMAGE_EXT_BY_MIME as EXT_BY_MIME, isAllowedImage } from './image-check.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
 
-const KINDS = ['menu', 'category', 'cover'] as const;
+const KINDS = ['menu', 'category', 'cover', 'staff'] as const;
 type Kind = (typeof KINDS)[number];
-
-const EXT_BY_MIME: Record<string, string> = {
-  'image/webp': '.webp',
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-};
 
 // One generic image endpoint instead of one per feature. The browser already
 // crops + compresses to WebP before uploading (see web/lib/image.ts), so the
@@ -47,6 +42,7 @@ export class UploadsController {
   ) {
     if (!KINDS.includes(kind as Kind)) throw new BadRequestException('Unknown upload kind');
     if (!file) throw new BadRequestException('No file uploaded');
+    if (!isAllowedImage(file.mimetype, file.buffer)) throw new BadRequestException('That file is not a valid JPG, PNG or WebP image');
 
     const dir = path.join(process.cwd(), 'public', 'uploads', kind);
     fs.mkdirSync(dir, { recursive: true });

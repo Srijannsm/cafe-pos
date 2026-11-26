@@ -14,6 +14,7 @@ import { IconUpload, IconX, IconWifi, IconPhone } from "../../../components/icon
 import { derivePalette, applyBrand } from "../../../lib/theme";
 import { assetUrl, rs } from "../../../lib/format";
 import { uploadImage } from "../../../lib/upload";
+import { useImageCropper } from "../../../components/ui/ImageCropper";
 import { prepareImage } from "../../../lib/image";
 
 type Tab = "brand" | "billing" | "features";
@@ -26,6 +27,7 @@ const FONTS = [
 
 export default function SettingsPage() {
   const { showToast, toastHost } = useToast();
+  const { crop, cropDialog } = useImageCropper();
   const { settings, refresh } = useCafeSettings();
   const [tab, setTab] = useState<Tab>("brand");
   const [f, setF] = useState<CafeSettings | null>(null);
@@ -70,9 +72,11 @@ export default function SettingsPage() {
 
   async function onLogo(file?: File) {
     if (!file) return;
-    setBusyImg("logo");
     try {
-      const blob = await prepareImage(file, { aspect: 1, maxWidth: 512 });
+      const area = await crop(file, { aspect: 1, round: true, title: "Crop your logo", hint: "Shown in a circle or rounded square across the app and on receipts." });
+      if (!area) return;
+      setBusyImg("logo");
+      const blob = await prepareImage(file, { aspect: 1, maxWidth: 512, crop: area });
       const form = new FormData();
       form.append("logo", blob, blob.type === "image/webp" ? "logo.webp" : "logo.jpg");
       const res = await apiFetchJson<{ logoUrl: string }>("/cafes/settings/logo", { method: "POST", body: form });
@@ -87,9 +91,11 @@ export default function SettingsPage() {
 
   async function onCover(file?: File) {
     if (!file) return;
-    setBusyImg("cover");
     try {
-      const url = await uploadImage(file, "cover", 16 / 9, 1600);
+      const area = await crop(file, { aspect: 16 / 9, title: "Crop cover photo", hint: "The banner at the top of your QR menu and staff login screen." });
+      if (!area) return;
+      setBusyImg("cover");
+      const url = await uploadImage(file, "cover", 16 / 9, 1600, area);
       set("coverImageUrl", url);
       await save({ coverImageUrl: url });
     } catch (e) {
@@ -108,6 +114,7 @@ export default function SettingsPage() {
   return (
     <div>
       {toastHost}
+      {cropDialog}
       <PageHeader title="Settings" description="Your cafe's look, billing rules and features." actions={tab !== "features" ? <Button loading={saving} onClick={() => save()}>Save changes</Button> : undefined} />
       <Tabs className="mb-6" value={tab} onChange={setTab} tabs={[{ value: "brand", label: "Cafe & vibe" }, { value: "billing", label: "Billing & tax" }, { value: "features", label: "Features" }]} />
 
@@ -292,7 +299,7 @@ export default function SettingsPage() {
                   label={x.label}
                   description={x.description}
                 />
-                {x.plan === false && <p className="mt-2 text-sm text-status-warning-ink">Not included in your plan — see <a href="/admin/billing" className="font-medium underline">Plan</a> to compare.</p>}
+                {x.plan === false && <p className="mt-2 text-sm text-status-warning-ink">Not included in your plan — see <a href="/admin/plan" className="font-medium underline">Plan</a> to compare.</p>}
               </div>
             ))}
           </div>

@@ -14,7 +14,7 @@ import { Skeleton } from "../../../components/ui/Skeleton";
 import { ErrorState } from "../../../components/ui/ErrorState";
 import { ItemSheet, type SheetItem } from "../../../components/order/ItemSheet";
 import { VoidDialog } from "../../../components/order/VoidDialog";
-import { IconChevronLeft, IconSearch, IconX, IconTrash, IconCheck, IconFlame, IconUndo } from "../../../components/icons";
+import { IconChevronLeft, IconSearch, IconX, IconTrash, IconCheck, IconFlame, IconUndo, IconMinus, IconPlus } from "../../../components/icons";
 import { assetUrl, rs, timeAgo } from "../../../lib/format";
 import { type Category, type Station } from "../../../lib/menu-types";
 
@@ -61,7 +61,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [voiding, setVoiding] = useState<Line | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [notes, setNotes] = useState("");
-  const [undo, setUndo] = useState<{ lineId: number; name: string } | null>(null);
+  const [undo, setUndo] = useState<{ lineId: number; qty: number; name: string } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => apiFetchJson<Order>(`/orders/${id}`).then((o) => { setOrder(o); return o; }), [id]);
@@ -99,6 +99,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const unsentTotal = unsent.reduce((s, l) => s + lineTotal(l), 0);
   const qtyInOrder = (mid: number) => live.filter((l) => l.menuItem.id === mid).reduce((s, l) => s + l.quantity, 0);
   const canEdit = order && ["pending", "preparing", "served"].includes(order.status);
+  const canCancel = !!order && order.status === "pending" && sent.length === 0;
   const cooking = sent.filter((l) => !l.voidedAt && l.status === "pending").length;
   const readyCount = sent.filter((l) => !l.voidedAt && l.status === "ready").length;
 
@@ -112,7 +113,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       await refresh();
       setSheetItem(null);
       if (undoTimer.current) clearTimeout(undoTimer.current);
-      setUndo({ lineId: line.id, name: `${qty}× ${item.name}` });
+      setUndo({ lineId: line.id, qty, name: `${qty}× ${item.name}` });
       undoTimer.current = setTimeout(() => setUndo(null), 4000);
       navigator.vibrate?.(15);
     } catch (e) {
@@ -143,7 +144,21 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
     const u = undo;
     setUndo(null);
     try {
-      await apiFetch(`/orders/items/${u.lineId}`, { method: "DELETE" });
+      // Lines merge ("3× French Toast"), so undo takes back only what was
+      // just added instead of deleting the whole line.
+      await changeQty(u.lineId, -u.qty);
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    }
+  }
+
+  async function changeQty(lineId: number, delta: number) {
+    try {
+      await apiFetchJson(`/orders/items/${lineId}/quantity`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta }),
+      });
       await refresh();
     } catch (e) {
       showToast((e as Error).message, "error");
@@ -209,15 +224,33 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             </p>
             <ul className="space-y-2">
               {unsent.map((l) => (
-                <li key={l.id} className="flex items-start gap-3 rounded-xl border border-status-warning/30 bg-status-warning-tint/50 p-3">
-                  <span className="tabular mt-0.5 text-sm font-semibold">{l.quantity}×</span>
+                <li key={l.id} className="flex items-center gap-3 rounded-xl border border-status-warning/30 bg-status-warning-tint/50 p-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">{l.menuItem.name}</p>
                     {l.orderItemModifiers.length > 0 && <p className="text-xs text-ink-secondary">{l.orderItemModifiers.map((m) => m.modifier.name).join(", ")}</p>}
                     {l.note && <p className="text-xs font-medium text-status-warning-ink">“{l.note}”</p>}
                   </div>
                   <span className="tabular text-sm">{rs(lineTotal(l))}</span>
-                  <button type="button" aria-label="Remove" onClick={() => removeLine(l)} className="-m-1 p-1 text-ink-faint hover:text-status-danger-ink"><IconTrash className="h-4 w-4" /></button>
+                  {/* Stepper: at 1, minus becomes a bin (removes the line). */}
+                  <div className="flex shrink-0 items-center rounded-full border border-border-subtle bg-surface-raised">
+                    <button
+                      type="button"
+                      aria-label={l.quantity === 1 ? `Remove ${l.menuItem.name}` : `One less ${l.menuItem.name}`}
+                      onClick={() => (l.quantity === 1 ? removeLine(l) : changeQty(l.id, -1))}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-ink-secondary hover:bg-surface-sunken hover:text-status-danger-ink"
+                    >
+                      {l.quantity === 1 ? <IconTrash className="h-3.5 w-3.5" /> : <IconMinus className="h-3.5 w-3.5" />}
+                    </button>
+                    <span className="tabular w-6 text-center text-sm font-semibold">{l.quantity}</span>
+                    <button
+                      type="button"
+                      aria-label={`One more ${l.menuItem.name}`}
+                      onClick={() => changeQty(l.id, 1)}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary"
+                    >
+                      <IconPlus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -277,9 +310,6 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
           <Button size="large" className="w-full" loading={busy} onClick={() => act("bill", "Bill ready", () => router.push(`/billing/${id}`))}>Get bill · {rs(total)}</Button>
         )}
         {order.status === "billed" && <Link href={`/billing/${id}`}><Button size="large" className="w-full">Go to bill</Button></Link>}
-        {order.status === "pending" && sent.length === 0 && (
-          <button type="button" onClick={() => setConfirmCancel(true)} className="w-full py-2 text-sm font-medium text-ink-faint hover:text-status-danger-ink">Cancel order</button>
-        )}
       </div>
     </div>
   );
@@ -304,6 +334,23 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               </>
             ) : <Skeleton className="h-5 w-24" />}
           </div>
+        )}
+        {/* Trailing edge, away from Back: easy to find, hard to hit by accident.
+            Only before the kitchen has anything -- after that, cancelling is a
+            manager decision with a reason. Still confirms before cancelling. */}
+        {canCancel && !searching && (
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmCancel(true)}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-raised px-3 text-sm font-medium text-status-danger-ink transition hover:border-status-danger/40 hover:bg-status-danger-tint"
+            >
+              <IconTrash className="h-4 w-4" />
+              <span className="sm:hidden">Cancel</span>
+              <span className="hidden sm:inline">Cancel order</span>
+            </button>
+            <span className="mx-1 h-6 w-px shrink-0 bg-border-subtle" aria-hidden="true" />
+          </>
         )}
         <button type="button" aria-label={searching ? "Close search" : "Search"} onClick={() => { setSearching((s) => !s); setSearch(""); }} className="rounded-full p-2.5 text-ink-secondary hover:bg-surface-sunken">
           {searching ? <IconX className="h-5 w-5" /> : <IconSearch className="h-5 w-5" />}

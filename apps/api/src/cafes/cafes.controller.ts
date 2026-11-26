@@ -10,6 +10,7 @@ import { RolesGuard } from '../auth/roles.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
 import { UpdateCafeSettingsDto } from './dto/update-cafe-settings.dto.js';
+import { IMAGE_EXT_BY_MIME, isAllowedImage } from '../uploads/image-check.js';
 
 @Controller('cafes')
 export class CafesController {
@@ -41,8 +42,8 @@ export class CafesController {
   @UseInterceptors(FileInterceptor('logo', {
     limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
     fileFilter: (_req, file, cb) => {
-      if (!file.mimetype.startsWith('image/')) {
-        return cb(new BadRequestException('Only image files are allowed'), false);
+      if (!IMAGE_EXT_BY_MIME[file.mimetype]) {
+        return cb(new BadRequestException('Only JPG, PNG or WebP images are allowed'), false);
       }
       cb(null, true);
     },
@@ -52,6 +53,7 @@ export class CafesController {
     @UploadedFile() file: { originalname: string; mimetype: string; buffer: Buffer; size: number },
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
+    if (!isAllowedImage(file.mimetype, file.buffer)) throw new BadRequestException('That file is not a valid JPG, PNG or WebP image');
     return this.cafesService.uploadLogo(user.cafeId, file);
   }
 

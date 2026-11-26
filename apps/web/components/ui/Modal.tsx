@@ -26,13 +26,22 @@ const SIZE_CLASS: Record<NonNullable<ModalProps["size"]>, string> = {
  */
 export function Modal({ open, onClose, title, size = "md", children }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Pages pass a new onClose arrow on every render. If the effect below
+  // depended on it, it would re-run on every keystroke in a field inside
+  // the modal and its "focus the panel" line would steal focus from that
+  // field (you could type one letter, then had to click the box again).
+  // Keep the latest onClose in a ref instead and only react to `open`.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!open) return;
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !panelRef.current) return;
@@ -55,11 +64,11 @@ export function Modal({ open, onClose, title, size = "md", children }: ModalProp
     }
 
     document.addEventListener("keydown", handleKeyDown);
-    // Focus the panel itself on open so Escape/Tab work immediately,
-    // without guessing which inner element should get focus first.
-    panelRef.current?.focus();
+    // Focus the panel once on open so Escape/Tab work immediately -- unless
+    // something inside (an autoFocus input) already took focus.
+    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus();
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

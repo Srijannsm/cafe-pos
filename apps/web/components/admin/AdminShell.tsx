@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { StaffAvatar } from "../ui/StaffAvatar";
 import { usePathname, useRouter } from "next/navigation";
 import { logout, type CurrentUser } from "../../lib/api";
 import { useCafeSettings } from "../../lib/CafeSettingsContext";
@@ -11,6 +12,7 @@ import {
   IconGrid, IconClipboardList, IconBox, IconWallet, IconBarChart, IconTable, IconUsers, IconSettings,
   IconBanknote, IconChevronDown, IconMenu, IconLogout, IconClock, IconReceipt, IconExternal, IconX,
 } from "../icons";
+import { BrandMark, PoweredBy } from "../brand/Brand";
 
 type IconType = React.ComponentType<{ className?: string }>;
 type NavLeaf = { label: string; href: string };
@@ -66,11 +68,12 @@ export function AdminShell({
           { label: "Shift history", href: "/admin/cash/shifts" },
         ],
       },
+      { label: "Bills", icon: IconReceipt, href: "/admin/bills" },
       { label: "Reports", icon: IconBarChart, href: "/admin/reports", show: reportsEnabled },
       { label: "Tables & QR", icon: IconTable, href: "/admin/tables" },
       { label: "Staff", icon: IconUsers, href: "/admin/users" },
       { label: "Settings", icon: IconSettings, href: "/admin/settings" },
-      { label: "Plan", icon: IconBanknote, href: "/admin/billing" },
+      { label: "Plan", icon: IconBanknote, href: "/admin/plan" },
     ],
     [settings?.inventoryEnabled, reportsEnabled, inventoryInPlan],
   );
@@ -86,7 +89,7 @@ export function AdminShell({
   }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showLabels = !collapsed || hovered || mobileOpen;
-  const cafeName = settings?.name ?? "Cafe POS";
+  const cafeName = settings?.name ?? "Aaramva POS";
   const logo = assetUrl(settings?.logoUrl);
 
   function toggleCollapse() {
@@ -189,7 +192,7 @@ export function AdminShell({
           </ul>
 
           <p className={`mb-3 mt-8 text-xs uppercase text-ink-faint ${showLabels ? "px-3" : "text-center"}`}>
-            {showLabels ? "Floor" : "•••"}
+            {showLabels ? "Service" : "•••"}
           </p>
           <ul className="flex flex-col gap-1">
             {[
@@ -210,6 +213,9 @@ export function AdminShell({
             ))}
           </ul>
         </nav>
+        <div className={`border-t border-border-subtle py-4 ${showLabels ? "px-2" : "flex justify-center"}`}>
+          {showLabels ? <PoweredBy /> : <BrandMark className="h-5 w-5" title="Aaramva POS" />}
+        </div>
       </aside>
 
       <div className={`flex min-h-screen flex-col transition-all duration-300 ${collapsed ? "lg:ml-[88px]" : "lg:ml-[280px]"}`}>
@@ -230,9 +236,7 @@ export function AdminShell({
               onClick={() => setMenuOpen((o) => !o)}
               className="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-3 transition hover:bg-surface-sunken"
             >
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-tint text-sm font-semibold text-brand-strong">
-                {user.name.charAt(0).toUpperCase()}
-              </span>
+              <StaffAvatar id={user.id} name={user.name} avatarUrl={user.avatarUrl} className="h-9 w-9 text-sm" />
               <span className="hidden text-left sm:block">
                 <span className="block text-sm font-medium leading-tight text-ink-primary">{user.name}</span>
                 <span className="block text-xs capitalize leading-tight text-ink-faint">{user.role}</span>

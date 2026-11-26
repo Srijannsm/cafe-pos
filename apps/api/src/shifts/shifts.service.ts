@@ -72,10 +72,12 @@ export class ShiftsService {
   }
 
   async open(cafeId: number, dto: OpenShiftDto, actor: Actor) {
-    const existing = await this.prisma.shift.findFirst({ where: { cafeId, closedAt: null } });
-    if (existing) throw new BadRequestException('A shift is already open');
-    const shift = await this.prisma.shift.create({
-      data: { cafeId, openedById: actor.userId, openingCash: dto.openingCash },
+    // Serialise "open shift" per cafe so two cashiers can't open two drawers at once.
+    const shift = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM cafes WHERE id = ${cafeId} FOR UPDATE`;
+      const existing = await tx.shift.findFirst({ where: { cafeId, closedAt: null } });
+      if (existing) throw new BadRequestException('A shift is already open');
+      return tx.shift.create({ data: { cafeId, openedById: actor.userId, openingCash: dto.openingCash } });
     });
     return this.summarize(shift.id);
   }

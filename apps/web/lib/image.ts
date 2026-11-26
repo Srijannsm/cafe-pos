@@ -3,20 +3,32 @@
 // Why in the browser: a phone photo is 3-8 MB. Shrinking it to a ~100 KB
 // WebP here means faster uploads on cafe Wi-Fi, a fast QR menu for
 // customers on mobile data, and no native image library on the server.
+/** A crop rectangle in the source image's own pixels (from ImageCropper). */
+export type CropArea = { x: number; y: number; width: number; height: number };
+
 export async function prepareImage(
   file: File,
-  opts: { aspect: number; maxWidth: number; quality?: number },
+  opts: { aspect: number; maxWidth: number; quality?: number; crop?: CropArea | null },
 ): Promise<Blob> {
   const bitmap = await loadBitmap(file);
   const { aspect, maxWidth } = opts;
 
-  // Centre-crop to the target aspect ratio (4:3 for menu items, 16:9 covers).
-  let sw = bitmap.width;
-  let sh = bitmap.height;
-  if (sw / sh > aspect) sw = Math.round(sh * aspect);
-  else sh = Math.round(sw / aspect);
-  const sx = Math.round((bitmap.width - sw) / 2);
-  const sy = Math.round((bitmap.height - sh) / 2);
+  let sx: number, sy: number, sw: number, sh: number;
+  if (opts.crop) {
+    // The area the person framed in the crop dialog (clamped to the image).
+    sx = Math.max(0, Math.round(opts.crop.x));
+    sy = Math.max(0, Math.round(opts.crop.y));
+    sw = Math.min(bitmap.width - sx, Math.round(opts.crop.width));
+    sh = Math.min(bitmap.height - sy, Math.round(opts.crop.height));
+  } else {
+    // No crop chosen: centre-crop to the target aspect ratio.
+    sw = bitmap.width;
+    sh = bitmap.height;
+    if (sw / sh > aspect) sw = Math.round(sh * aspect);
+    else sh = Math.round(sw / aspect);
+    sx = Math.round((bitmap.width - sw) / 2);
+    sy = Math.round((bitmap.height - sh) / 2);
+  }
 
   const w = Math.min(maxWidth, sw);
   const h = Math.round(w / aspect);

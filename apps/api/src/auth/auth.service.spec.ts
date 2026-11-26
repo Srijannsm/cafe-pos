@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { HttpException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -56,7 +57,7 @@ describe('AuthService', () => {
     it('rejects a wrong PIN without revealing whether the user exists', async () => {
       const pinHash = await bcrypt.hash('9999', 10);
       prisma.cafe.findUnique.mockResolvedValue({ id: 1, slug: 'mittho-cafe', isActive: true });
-      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash });
+      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash, isActive: true });
 
       await expect(service.login({ ...dto, pin: '0000' })).rejects.toThrow(UnauthorizedException);
     });
@@ -64,7 +65,7 @@ describe('AuthService', () => {
     it('signs a token scoped to the cafe and returns the user on a matching PIN', async () => {
       const pinHash = await bcrypt.hash('9999', 10);
       prisma.cafe.findUnique.mockResolvedValue({ id: 1, slug: 'mittho-cafe', isActive: true });
-      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash });
+      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash, isActive: true });
 
       const result = await service.login(dto);
 
@@ -78,6 +79,26 @@ describe('AuthService', () => {
         accessToken: 'signed.jwt.token',
         user: { id: 1, name: 'Admin', role: 'admin', cafeId: 1 },
       });
+    });
+
+    it('refuses a deactivated staff member even with the right PIN', async () => {
+      const pinHash = await bcrypt.hash('9999', 10);
+      prisma.cafe.findUnique.mockResolvedValue({ id: 1, slug: 'mittho-cafe', isActive: true });
+      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash, isActive: false });
+
+      await expect(service.login(dto)).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('locks a staff member out after 5 wrong PINs, even if the 6th is right', async () => {
+      const pinHash = await bcrypt.hash('9999', 4);
+      prisma.cafe.findUnique.mockResolvedValue({ id: 1, slug: 'mittho-cafe', isActive: true });
+      prisma.user.findUnique.mockResolvedValue({ id: 1, cafeId: 1, name: 'Admin', role: 'admin', pinHash, isActive: true });
+
+      for (let i = 0; i < 5; i++) {
+        await expect(service.login({ ...dto, pin: '0000' })).rejects.toThrow(UnauthorizedException);
+      }
+      await expect(service.login(dto)).rejects.toThrow(HttpException);
+      await expect(service.login(dto)).rejects.toMatchObject({ status: 429 });
     });
   });
 });

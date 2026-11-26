@@ -34,6 +34,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       .catch(() => setReportsEnabled(false));
   }, [ready, router]);
 
+  // Pick up changes to the signed-in user made in this tab (e.g. own photo).
+  useEffect(() => {
+    const reread = () => setUser(getCurrentUser());
+    window.addEventListener("currentuser-change", reread);
+    return () => window.removeEventListener("currentuser-change", reread);
+  }, []);
+
   if (!ready || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-canvas">

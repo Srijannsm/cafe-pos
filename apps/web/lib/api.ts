@@ -40,6 +40,7 @@ export type CurrentUser = {
   name: string;
   role: string;
   cafeId: number;
+  avatarUrl?: string | null;
 };
 
 export function getCurrentUser(): CurrentUser | null {
@@ -140,6 +141,8 @@ export async function platformFetchJson<T = unknown>(path: string, options: Requ
 
   if (res.status === 401) {
     platformLogout();
+    // Full reload on purpose: clears every in-memory platform state.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/platform/login";
     throw new Error("Platform session expired");
   }

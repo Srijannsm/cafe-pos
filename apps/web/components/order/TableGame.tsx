@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
+import { tableLabel } from "../../lib/format";
 
 const SOCKET_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/\/api\/?$/, "");
 const REACTIONS = ["👏", "😂", "😮", "🔥", "🤝"];
@@ -103,7 +104,7 @@ export function TableGame({ qrToken, t }: { qrToken: string; t: (k: string) => s
       <div className="flex items-center justify-between text-sm">
         <span className="flex items-center gap-1.5 font-semibold">{mine?.avatar} {t("you")} <span className="tabular text-ink-faint">{game.score[game.you]}</span></span>
         <span className="tabular text-xs text-ink-faint">{game.score.draw} {t("draws")}</span>
-        <span className="flex items-center gap-1.5 font-semibold"><span className="tabular text-ink-faint">{game.score[game.you === "X" ? "O" : "X"]}</span> {opp ? `T${opp.table}` : "…"} {opp?.avatar ?? "⏳"}</span>
+        <span className="flex items-center gap-1.5 font-semibold"><span className="tabular text-ink-faint">{game.score[game.you === "X" ? "O" : "X"]}</span> {opp ? tableLabel(opp.table) : "…"} {opp?.avatar ?? "⏳"}</span>
       </div>
       <p className={`rounded-xl py-2 text-center text-sm font-semibold ${myTurn ? "bg-brand text-on-brand" : game.winner === game.you ? "bg-status-success-tint text-status-success-ink" : "bg-surface-sunken text-ink-secondary"}`}>{status}</p>
       <div className="mx-auto grid aspect-square w-full max-w-[300px] grid-cols-3 gap-2">

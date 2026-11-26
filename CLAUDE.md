@@ -1,4 +1,4 @@
-# Cafe POS System — Project Context
+# Aaramva POS — Project Context
 
 ## What this is
 A multi-tenant cafe/restaurant POS SaaS, with a waiter ordering app as a core
@@ -106,6 +106,29 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   staff member's own cafe. Nothing requires editing the DB or seed script
   by hand anymore for day-to-day staff changes.
 
+- Staff photos: User.avatarUrl (migration 20261126120000_staff_avatar),
+  uploaded via POST /uploads/image/staff (cropped square, 256px, in the
+  browser) and set with PATCH /users/:id { avatarUrl } (must be an
+  /uploads/staff/... path; null removes). Admin taps the avatar on
+  /admin/users. Shown via components/ui/StaffAvatar.tsx (photo or initials)
+  on the PIN login screen, floor NavBar and admin top bar.
+- Order screen (/order/:id): "Cancel order" is an outlined button at the
+  trailing (right) end of the top bar, before Search -- away from Back so it
+  can't be hit by accident. Only while nothing has gone to the kitchen; after
+  that, cancelling needs an admin + reason. Always confirms.
+- Cart lines merge: OrdersService.addItem adds to an existing line when it's
+  the same item + same price snapshot + same modifiers + same note and not
+  yet sent to the kitchen (order row locked, so quick double taps can't
+  duplicate). PATCH /orders/items/:id/quantity { delta } powers the cart
+  stepper and "Undo" (reaching 0 removes the line; tracked stock follows;
+  sent lines can't change -- void instead).
+- Every image upload goes through the crop dialog first:
+  components/ui/ImageCropper.tsx (useImageCropper -> `await crop(file,
+  { aspect, round?, title, hint })`, null = cancelled), then
+  uploadImage(file, kind, aspect, maxWidth, area) / prepareImage({ crop }).
+  Aspects: menu 4:3, cover 16:9, logo and staff 1:1 (round guide).
+  New upload spots must use the same pattern.
+
 ## Platform admin (internal superadmin panel)
 - /platform (web) + PlatformAdminModule/PlatformAuthModule (api) is the
   internal superadmin panel: sign in at /platform/login, see a
@@ -162,6 +185,14 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
 - Shifts (cash drawer): one open shift per cafe; payments link to it;
   CashMovement = pay_in / pay_out / expense. Close = counted cash vs expected
   (opening + cash sales + pay-ins - pay-outs/expenses), difference frozen.
+
+## Bills (admin)
+- /admin/bills: every generated bill (Order.billNumber set), newest first,
+  filter by date/status, search by bill no., order no. or table (search
+  ignores the date range). Drawer shows items, voids, discount, payments, with
+  Reprint and Take payment. Backed by GET /orders/bills (admin+cashier,
+  keyset-paginated with ?before=), NOT the Reports API -- so it works on every
+  plan. Plan page moved to /admin/plan (/admin/billing redirects there).
 
 ## Inventory tracking
 - Opt-in, per menu item (MenuItem.trackStock) -- most items (drinks made
@@ -249,6 +280,32 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   No native image library on the server on purpose.
 - Any staff member can 86 an item: PATCH /menu/:id/availability.
 
+## Product brand: Aaramva POS
+- The product is called **Aaramva POS** (sister product of Aaramva Shikshya).
+  Logo = "two-tone A": a green disc (#005538) with an open A whose left leg is
+  white and right leg amber (#F2A93B). Wordmark = lowercase "aaramva" (Outfit
+  700, outlined to paths) + an amber "POS" pill.
+- Files: apps/web/public/brand/ (mark, mark-light, logo, logo-on-dark SVGs),
+  app/icon.svg + app/favicon.ico, public/icon-*.png (PWA, maskable has safe-zone
+  padding), apple-touch-icon.png. Source generator lives outside the repo; edit
+  the SVGs directly if tweaking.
+- Code: components/brand/Brand.tsx (BrandMark inline SVG, BrandLogo, PoweredBy)
+  and lib/brand.ts (PRODUCT_NAME, colours). Use these, don't hard-code the name.
+- Where it shows: tab title ("%s · Aaramva POS"), favicon, installed PWA
+  name/icon, platform panel + platform login (full brand), fallback name when a
+  cafe has no settings yet. Tenant screens lead with the CAFE's own brand and
+  only carry a quiet "Powered by Aaramva POS" (staff login footer, admin
+  sidebar footer, customer QR page footer, printed receipt).
+
+## Staff login
+- /c/:slug/login: pick name -> 4-digit PIN (keypad + physical keyboard), cafe
+  cover/logo/colour framing, last user on this device listed first.
+- Uses plain fetch for /auth/login, NOT apiFetch (apiFetch treats 401 as an
+  expired session and reloads the page, which would hide "wrong PIN").
+- AuthService locks a staff member out for 60s after 5 wrong PINs (429), and
+  refuses deactivated users (User.isActive) even with the right PIN. Lockout is
+  in-memory per API process -- move to Redis if the API is ever scaled out.
+
 ## Branding & design system (v3)
 - Look matches Aaramva Shikshya: TailAdmin-style neutral greys, Outfit font,
   rounded-2xl cards, collapsible grouped sidebar (components/admin/AdminShell).
@@ -281,6 +338,48 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   (Cafe.inventoryEnabled / gamesEnabled) is on.
 - New plan feature = add a column to PlanConfig + PlanFeature union in
   plan-limits.ts + a row in the platform Plans page and cafe Plan page.
+
+## QA & safety rules (Nov 2026 QA pass -- see docs/qa-report-2026-11-26.md)
+- API e2e suite: apps/api/test/e2e (90 tests, real Postgres, `npm run test:e2e`,
+  needs E2E_DATABASE_URL). Add a test there for every new endpoint.
+- Money-path writes that check-then-write must lock first: payments lock the
+  order row (`SELECT ... FOR UPDATE`), order create locks the table row,
+  shift open locks the cafe row, bill generation claims served->billed with a
+  conditional updateMany. Keep this pattern for anything similar.
+- JwtStrategy re-reads the user + cafe on every request (deactivation and
+  role changes apply immediately). Don't trust role/cafeId from the token alone.
+- ValidationPipe runs with transform:true -- query/param DTOs get real numbers.
+  Consequence: every declared DTO field EXISTS on the object (as undefined)
+  even when the client didn't send it. Never use `'field' in dto` to mean
+  "was sent" -- use `dto.field !== undefined` (and null = "clear it").
+  That bug wiped logos/billing notes and made plan limits unlimited.
+- Modal keeps onClose in a ref; effects that focus things must not depend on
+  inline callbacks, or every keystroke re-runs them and steals focus.
+- Image uploads: src/uploads/image-check.ts (PNG/JPEG/WebP + magic bytes,
+  server-chosen extension). Use it for any new upload.
+- Table labels in the UI: lib/format.ts tableLabel() -- never prefix "T".
+- Production config: app.setup.ts assertProductionEnv(); see docs/deploy-checklist.md.
+
+## Kitchen display (KDS)
+- GET /orders/kitchen?station=&tz= (KitchenService) returns the board
+  already shaped: `cooking` tickets, a `ready` lane, per-station `counts`,
+  `allDay` totals and today's `stats`. The page just renders it -- it no
+  longer downloads every open order and regroups in the browser.
+- A ticket is one *round*: items of one order sent together (same
+  OrderItem.sentAt, stamped by sendToKitchen). A second send makes a
+  separate "Round 2" ticket with its own timer instead of merging.
+- OrderItem.readyAt is stamped on ready (cleared on recall) so cook time
+  (readyAt - sentAt) and "avg ticket today" are real numbers, not guesses.
+  `tz` is the browser's UTC offset in minutes, used only for "today".
+- PATCH /orders/items/ready { ids } bumps a whole ticket in one call
+  (cafe-scoped updateMany; 400 if nothing matched). Tapping one item
+  toggles it ready/recall; "Picked up" on the Ready lane calls
+  PATCH /orders/:id/serve and only shows when the whole order is ready.
+- Timer colours use per-station limits (kitchen 10/15m, bar 5/8m,
+  hookah 8/12m); a drinks-only ticket uses the bar limits.
+- Layout: lg+ = tickets grid + right rail (Ready, All day); below lg =
+  segmented Cooking / Ready / All day tabs, one ticket per row on phones.
+- Covered by test/e2e/kitchen.e2e-spec.ts.
 
 ## Known gaps (tracked, not urgent)
 - Test coverage: OrdersService (the full order lifecycle, cafeId-scoped) and

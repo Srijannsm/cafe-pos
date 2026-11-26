@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCafeSlug } from "../../lib/api";
+import { BrandMark } from "../../components/brand/Brand";
 
 // This bare /login route predates multi-tenancy. Staff now log in at
 // /c/:slug/login, so this just forwards to the cafe this device last used
@@ -24,10 +25,8 @@ export default function LoginRedirectPage() {
   if (!noCafeKnown) return null;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gradient-to-b from-surface-canvas to-surface-sunken p-6 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-lg font-bold text-on-brand">
-        ☕
-      </div>
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-canvas p-6 text-center">
+      <BrandMark className="h-12 w-12" />
       <h1 className="heading-lg text-ink-primary">We don&apos;t know which cafe this is</h1>
       <p className="body-md text-ink-secondary">
         Ask your manager for this cafe&apos;s login link -- it looks like /c/your-cafe/login.

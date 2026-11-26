@@ -58,3 +58,13 @@ export function ago(date: string | Date) {
   const t = timeAgo(date);
   return t === "just now" ? t : `${t} ago`;
 }
+
+/**
+ * How to show a table. Table numbers are free text: "4", "T5", "Bar-1",
+ * "Terrace 2". Only a bare number gets a "T" in front -- prefixing everything
+ * turned "T5" into "TT5" on the kitchen screen.
+ */
+export function tableLabel(tableNumber: string | number | null | undefined) {
+  const t = String(tableNumber ?? "").trim();
+  return /^\d+$/.test(t) ? `T${t}` : t;
+}

@@ -12,7 +12,7 @@ import { EmptyState } from "../../../components/ui/EmptyState";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { IconPlus, IconTruck, IconBox, IconSearch, IconEdit, IconCheck, IconAlert, IconBanknote } from "../../../components/icons";
 import { KIND_LABEL, PurchaseModal, StockItemModal, StockOutModal, type StockItem, type Supplier } from "../../../components/admin/inventory";
-import { num, rs, timeAgo, ago } from "../../../lib/format";
+import { num, rs, ago } from "../../../lib/format";
 
 type Filter = "all" | "ingredient" | "consumable" | "asset" | "low";
 

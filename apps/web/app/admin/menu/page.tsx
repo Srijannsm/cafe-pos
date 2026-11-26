@@ -17,6 +17,7 @@ import {
 } from "../../../components/icons";
 import { assetUrl, rs } from "../../../lib/format";
 import { uploadImage } from "../../../lib/upload";
+import { useImageCropper } from "../../../components/ui/ImageCropper";
 import {
   type AdminMenuItem, type Category, type Station, STATIONS, TAGS, orderedCategories,
 } from "../../../lib/menu-types";
@@ -366,6 +367,7 @@ function ItemDrawer({
   const [removedMods, setRemovedMods] = useState<number[]>([]);
   const [recipe, setRecipe] = useState<{ stockItemId: number | ""; quantity: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { crop, cropDialog } = useImageCropper();
 
   useEffect(() => {
     if (!open) return;
@@ -390,9 +392,11 @@ function ItemDrawer({
 
   async function onPickFile(file: File | undefined) {
     if (!file) return;
-    setUploading(true);
     try {
-      const url = await uploadImage(file, "menu", 4 / 3, 1200);
+      const area = await crop(file, { aspect: 4 / 3, title: "Crop item photo", hint: "This is how it shows on the waiter app and the QR menu." });
+      if (!area) return; // cancelled
+      setUploading(true);
+      const url = await uploadImage(file, "menu", 4 / 3, 1200, area);
       set("imageUrl", url);
     } catch (e) {
       onError((e as Error).message);
@@ -471,6 +475,8 @@ function ItemDrawer({
   const img = assetUrl(d.imageUrl);
 
   return (
+    <>
+    {cropDialog}
     <Drawer
       open={open}
       onClose={onClose}
@@ -641,6 +647,7 @@ function ItemDrawer({
         </div>
       </div>
     </Drawer>
+    </>
   );
 }
 

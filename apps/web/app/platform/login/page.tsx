@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { platformLogin } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Field, inputClass } from "../../../components/ui/Field";
+import { BrandLogo, BrandMark } from "../../../components/brand/Brand";
 
 export default function PlatformLoginPage() {
   const router = useRouter();
@@ -30,6 +31,7 @@ export default function PlatformLoginPage() {
     <main className="grid min-h-screen lg:grid-cols-2">
       <div className="flex items-center justify-center p-6">
         <form onSubmit={handleSubmit} className="w-full max-w-sm">
+          <BrandLogo className="mb-10 h-9 w-auto" />
           <h1 className="text-2xl font-semibold">Sign in</h1>
           <p className="mb-8 mt-1 text-sm text-ink-secondary">Platform admin — internal access only.</p>
           <div className="space-y-4">
@@ -44,13 +46,13 @@ export default function PlatformLoginPage() {
           </div>
         </form>
       </div>
-      <div className="hidden flex-col justify-between bg-[#0c111d] p-12 text-white lg:flex">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-lg">☕</span>
+      <div className="hidden flex-col justify-between bg-[#005538] p-12 text-white lg:flex">
+        <BrandMark light className="h-12 w-12" />
         <div>
           <p className="text-3xl font-semibold leading-tight">Every cafe on the platform,<br />in one place.</p>
           <p className="mt-3 max-w-md text-white/60">Onboard new cafes, track trials and renewals, and see who needs a call this week.</p>
         </div>
-        <p className="text-xs text-white/40">Cafe POS · Platform</p>
+        <p className="text-xs text-white/40">Aaramva POS · Platform</p>
       </div>
     </main>
   );

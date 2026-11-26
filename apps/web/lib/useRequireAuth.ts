@@ -26,8 +26,14 @@ export function useRequireAuth(): boolean {
 export function useCurrentUser() {
   const [user, setUser] = useState<import("./api").CurrentUser | null>(null);
   useEffect(() => {
-    const raw = localStorage.getItem("currentUser");
-    setUser(raw ? JSON.parse(raw) : null);
+    const read = () => {
+      const raw = localStorage.getItem("currentUser");
+      setUser(raw ? JSON.parse(raw) : null);
+    };
+    read();
+    // Re-read when this tab changes it (e.g. you updated your own photo).
+    window.addEventListener("currentuser-change", read);
+    return () => window.removeEventListener("currentuser-change", read);
   }, []);
   return user;
 }

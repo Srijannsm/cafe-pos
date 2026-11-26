@@ -215,10 +215,14 @@ export class PlatformAdminService {
     const data: Record<string, unknown> = {};
     const keys = ['name', 'isActive', 'vatEnabled', 'vatRate', 'plan', 'billingCycle', 'subscriptionStatus', 'setupFeePaid', 'inventoryEnabled', 'gamesEnabled'] as const;
     for (const k of keys) if (dto[k] !== undefined) data[k] = dto[k];
-    if ('panNumber' in dto) data.panNumber = dto.panNumber ?? null;
-    if ('logoUrl' in dto) data.logoUrl = dto.logoUrl ?? null;
-    if ('nextBillingAt' in dto) data.nextBillingAt = dto.nextBillingAt ? new Date(dto.nextBillingAt) : null;
-    if ('subscriptionNotes' in dto) data.subscriptionNotes = dto.subscriptionNotes ?? null;
+    // `undefined` = not sent (leave alone), `null` = clear it. Don't use
+    // `'key' in dto`: with ValidationPipe({ transform: true }) every declared
+    // DTO field exists on the object (as undefined), so `in` is always true
+    // and an unrelated save wiped the logo, PAN, billing date and notes.
+    if (dto.panNumber !== undefined) data.panNumber = dto.panNumber;
+    if (dto.logoUrl !== undefined) data.logoUrl = dto.logoUrl;
+    if (dto.nextBillingAt !== undefined) data.nextBillingAt = dto.nextBillingAt ? new Date(dto.nextBillingAt) : null;
+    if (dto.subscriptionNotes !== undefined) data.subscriptionNotes = dto.subscriptionNotes;
 
     return this.prisma.cafe.update({ where: { id }, data, select: CAFE_SUMMARY_SELECT });
   }

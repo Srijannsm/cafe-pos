@@ -1,10 +1,14 @@
 import { Body, Controller, Post, Param, ParseIntPipe, Patch, Delete, UseGuards, Get, Query } from '@nestjs/common';
 import { OrdersService } from './orders.service.js';
+import { KitchenService } from './kitchen.service.js';
+import { KitchenQueryDto, MarkReadyDto } from './dto/kitchen.dto.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { AddOrderDto } from './dto/add-item.dto.js';
 import { AddPaymentDto, RecordPaymentDto } from './dto/record-payment.dto.js';
 import { UpdateOrderNotesDto } from './dto/update-order-notes.dto.js';
 import { ApplyDiscountDto, OptionalReasonDto, ReasonDto } from './dto/billing.dto.js';
+import { ListBillsDto } from './dto/list-bills.dto.js';
+import { ChangeQuantityDto } from './dto/change-quantity.dto.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -14,12 +18,34 @@ import { OrderStatus } from '../generated/prisma/client.js';
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private ordersService: OrdersService) {}
+  constructor(private ordersService: OrdersService, private kitchen: KitchenService) {}
 
   @UseGuards(JwtAuthGuard)
   @Get()
   findAll(@CurrentUser() user: CurrentUserPayload, @Query('status') status?: OrderStatus) {
     return this.ordersService.findAll(user.cafeId, status);
+  }
+
+  // Kitchen display board -- declared before GET :orderId.
+  @UseGuards(JwtAuthGuard)
+  @Get('kitchen')
+  kitchenBoard(@CurrentUser() user: CurrentUserPayload, @Query() q: KitchenQueryDto) {
+    return this.kitchen.board(user.cafeId, q.station, q.tz);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin', 'cashier')
+  @Patch('items/ready')
+  markItemsReady(@CurrentUser() user: CurrentUserPayload, @Body() dto: MarkReadyDto) {
+    return this.kitchen.markReady(user.cafeId, dto.ids);
+  }
+
+  // Declared before GET :orderId so "bills" isn't parsed as an order id.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin', 'cashier')
+  @Get('bills')
+  listBills(@CurrentUser() user: CurrentUserPayload, @Query() q: ListBillsDto) {
+    return this.ordersService.listBills(user.cafeId, q);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,6 +64,17 @@ export class OrdersController {
     @Body() dto: AddOrderDto,
   ) {
     return this.ordersService.addItem(user.cafeId, orderId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('waiter', 'admin', 'cashier')
+  @Patch('items/:orderItemId/quantity')
+  changeQuantity(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderItemId', ParseIntPipe) orderItemId: number,
+    @Body() dto: ChangeQuantityDto,
+  ) {
+    return this.ordersService.changeQuantity(user.cafeId, orderItemId, dto.delta);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

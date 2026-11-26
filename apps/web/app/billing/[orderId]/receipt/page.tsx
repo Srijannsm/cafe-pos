@@ -155,6 +155,7 @@ export default function ReceiptPage({ params }: { params: Promise<{ orderId: str
           <p>{c.receiptFooter || "Thank you — see you again!"}</p>
           {c.wifiName && <p>Wi-Fi: {c.wifiName}{c.wifiPassword ? ` / ${c.wifiPassword}` : ""}</p>}
           {c.instagram && <p>Instagram @{c.instagram}</p>}
+          <p className="mt-2 text-[9px] opacity-70">Powered by Aaramva POS</p>
         </div>
       </div>
     </main>

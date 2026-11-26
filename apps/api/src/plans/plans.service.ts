@@ -63,9 +63,10 @@ export class PlansService implements OnModuleInit, OnModuleDestroy {
     const data = {
       ...dto,
       // "Unlimited" arrives as null; undefined means "not sent".
-      ...('maxStaff' in dto ? { maxStaff: dto.maxStaff ?? null } : {}),
-      ...('maxMenuItems' in dto ? { maxMenuItems: dto.maxMenuItems ?? null } : {}),
-      ...('maxTables' in dto ? { maxTables: dto.maxTables ?? null } : {}),
+      // undefined = not sent, null = unlimited (see platform-admin.service for why not `in`)
+      ...(dto.maxStaff !== undefined ? { maxStaff: dto.maxStaff } : {}),
+      ...(dto.maxMenuItems !== undefined ? { maxMenuItems: dto.maxMenuItems } : {}),
+      ...(dto.maxTables !== undefined ? { maxTables: dto.maxTables } : {}),
     };
     if (!existing) {
       const base = allPlans().find((p) => p.key === key);
