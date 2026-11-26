@@ -82,18 +82,36 @@ function ImageCropper({
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ dist: number; zoom: number } | null>(null);
 
-  // Load the picked file.
+  // onError is a new function on every parent render; keep the latest in a
+  // ref so it doesn't re-run (and cancel) the load effect below.
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onErrorRef.current = onError; });
+
+  // Load the picked file. The cleanup revokes the blob URL, which makes a
+  // still-loading <img> fail -- so a cleaned-up load must be ignored, not
+  // reported as "format not supported" (this happens on every open in dev,
+  // where React runs effects twice).
   useEffect(() => {
+    let live = true;
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
+      if (!live) return;
       setNat({ w: img.naturalWidth, h: img.naturalHeight });
       setSrc(url);
     };
-    img.onerror = () => onError(new Error("This image format isn't supported here -- please use JPG, PNG or WebP"));
+    img.onerror = () => {
+      if (live) onErrorRef.current(new Error("This image format isn't supported here -- please use JPG, PNG or WebP"));
+    };
     img.src = url;
-    return () => URL.revokeObjectURL(url);
-  }, [file, onError]);
+    return () => {
+      live = false;
+      // Still loading? Revoke once it settles, so the browser doesn't log a
+      // failed request for a load we simply no longer need.
+      if (img.complete) URL.revokeObjectURL(url);
+      else img.onload = img.onerror = () => URL.revokeObjectURL(url);
+    };
+  }, [file]);
 
   // Frame size: as wide as the dialog allows, capped in height for tall
   // screens / wide aspect ratios. Re-measured on resize.

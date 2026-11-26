@@ -99,6 +99,14 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
 ## Not yet built (do not assume these exist)
 - Public/self-serve cafe signup -- onboarding is internal-only (see below)
 
+## Staff roles
+- Roles nest: waiter < cashier < admin (each has everything the previous
+  one has). No multi-role per staff member -- someone who serves AND takes
+  payment is a Cashier. Waiters can generate/print/reopen a bill but not
+  take payment, discount, see bills history, shifts or stock.
+- The Staff page shows a one-line description of the chosen role
+  (ROLE_HELP in app/admin/users/page.tsx) -- keep it in sync if permissions change.
+
 ## Admin capabilities
 - Menu management (categories, items, modifiers), table management, and
   staff management (add waiters/cashiers, edit roles, deactivate, reset
@@ -359,6 +367,50 @@ Mittho Cafe's data now lives in the system as the first (test) tenant.
   server-chosen extension). Use it for any new upload.
 - Table labels in the UI: lib/format.ts tableLabel() -- never prefix "T".
 - Production config: app.setup.ts assertProductionEnv(); see docs/deploy-checklist.md.
+
+## Notifications
+- Saved, not just broadcast: NotificationsService.notify() (api/src/orders)
+  writes a `notifications` row and emits it as the socket event
+  `notification`. GET /notifications returns the cafe's last 24h (max 50);
+  waiters don't get the admin-only types (sent, voided). Rows older than a
+  week are pruned opportunistically. notify() never throws.
+- Types: qr_order, call_waiter, request_bill, ready, recalled, sent,
+  voided, cancel_request, cancel_approved, cancel_rejected. `data` carries items ("2x Momo"), count, waiter, cookSecs, reason.
+  Every place that changes those states must call notify() -- that's what
+  makes a screen that was closed/asleep/on another page catch up.
+- components/NotificationBell.tsx (admin header, Tables/Billing nav bar,
+  waiter order screen) loads history on mount, on socket reconnect and when
+  the tab becomes visible again; merges live rows by id. Read/unread = the
+  highest id seen, per staff member per device (localStorage). It is the
+  ONLY place that plays sounds; actionable types also show a pop-up card
+  (~8s) and "(N)" in the tab title -- once per notification across tabs.
+- The older per-action socket events (order.itemReady, qr.orderPlaced,
+  table.request, ...) still exist for screens that refresh themselves.
+- Allowed web origins live in api/src/cors.ts (CORS_ORIGIN, comma list) and
+  are read per request by BOTH the HTTP API and the Socket.IO gateways.
+  Never read process.env inside a @WebSocketGateway() decorator: it runs
+  before .env is loaded, so the socket silently fell back to localhost:3000
+  and refused phones on the LAN / the production domain.
+- These are in-app notifications (app must be open). Real push (lock
+  screen) is not built yet -- it would hang off NotificationsService.notify().
+- Covered by test/e2e/notifications.e2e-spec.ts.
+
+## Cancelling after the kitchen has the order ("customer left")
+- Kitchen tickets (cooking + ready lane) have a Cancel button -> reason
+  picker -> POST /cancel-requests {orderId, reason}. Any staff can ask; an
+  admin's request is approved at once. Only 'preparing'/'served' orders --
+  'pending' ones use the normal cancel on the order screen.
+- OrderCancelRequest (order_cancel_requests): pending | approved | rejected,
+  one pending per order (order row lock). POST /cancel-requests/:id/approve
+  or /reject is admin-only; the claim is a conditional updateMany so two
+  admins can't decide twice (409). Approve calls the existing
+  OrdersService.cancel() (stock back, table freed, audit log) -- one cancel
+  implementation; if that fails the request goes back to pending.
+- Kitchen board tickets carry `cancelRequest` (pending only) -> amber
+  "Cancellation requested" banner; admins get Approve/Decline right there.
+- Notifications: cancel_request (admins, with Approve/Decline in the bell
+  and pop-up), cancel_approved / cancel_rejected (everyone).
+- Covered by test/e2e/cancel-requests.e2e-spec.ts.
 
 ## Kitchen display (KDS)
 - GET /orders/kitchen?station=&tz= (KitchenService) returns the board

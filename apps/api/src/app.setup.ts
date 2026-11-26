@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
+import { allowedOrigins } from './cors.js';
 
 // Everything main.ts does to the app besides listen(), in one place, so the
 // end-to-end tests boot the API exactly the way production does.
@@ -10,8 +11,8 @@ export function configureApp(app: NestExpressApplication) {
   // and `take + 1` became "301".
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-  // CORS_ORIGIN can list several origins: "https://pos.example.com,https://www.example.com"
-  const origins = (process.env.CORS_ORIGIN ?? 'http://localhost:3000').split(',').map((o) => o.trim()).filter(Boolean);
+  // CORS_ORIGIN can list several origins (see cors.ts).
+  const origins = allowedOrigins();
   app.enableCors({ origin: origins.length === 1 ? origins[0] : origins, credentials: true });
 
   // Basic hardening without an extra dependency (helmet would also work).

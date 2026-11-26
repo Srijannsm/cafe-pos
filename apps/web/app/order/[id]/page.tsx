@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, use } from "react";
+import { NotificationBell } from "../../../components/NotificationBell";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, apiFetchJson } from "../../../lib/api";
@@ -352,6 +353,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             <span className="mx-1 h-6 w-px shrink-0 bg-border-subtle" aria-hidden="true" />
           </>
         )}
+        {!searching && <NotificationBell authReady={ready} />}
         <button type="button" aria-label={searching ? "Close search" : "Search"} onClick={() => { setSearching((s) => !s); setSearch(""); }} className="rounded-full p-2.5 text-ink-secondary hover:bg-surface-sunken">
           {searching ? <IconX className="h-5 w-5" /> : <IconSearch className="h-5 w-5" />}
         </button>

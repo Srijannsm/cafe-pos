@@ -6,6 +6,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { hasFeature } from '../subscription/plan-limits.js';
+import { socketCors } from '../cors.js';
 
 // "Play while you wait" -- a tiny tic-tac-toe for customers on the QR page.
 //
@@ -40,7 +41,7 @@ const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8],
 
 @WebSocketGateway({
   namespace: 'games',
-  cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
+  cors: socketCors,
 })
 export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(GamesGateway.name);

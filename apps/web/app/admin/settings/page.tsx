@@ -25,6 +25,13 @@ const FONTS = [
   { value: "playful", label: "Playful", sample: "font-[family-name:var(--font-poppins)]" },
 ];
 
+// Sample dishes for the customer-menu preview.
+const PREVIEW_ITEMS: [string, number, string][] = [
+  ["Iced Latte", 280, "Double shot over ice"],
+  ["Chicken Momo", 220, "Steamed, with tomato achar"],
+  ["French Toast", 240, "Honey and seasonal fruit"],
+];
+
 export default function SettingsPage() {
   const { showToast, toastHost } = useToast();
   const { crop, cropDialog } = useImageCropper();
@@ -230,14 +237,30 @@ export default function SettingsPage() {
                 <div className="flex gap-2 text-xs">
                   {["Popular", "Coffee", "Momo"].map((c, i) => <span key={c} className="rounded-full px-3 py-1.5 font-medium" style={i === 0 ? { background: palette?.brand, color: palette?.onBrand } : { background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>{c}</span>)}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {[["Iced Latte", 280], ["Chicken Momo", 220]].map(([n, p]) => (
-                    <div key={n as string} className="overflow-hidden rounded-xl border border-border-subtle bg-surface-raised">
-                      <div className="aspect-[4/3] bg-surface-sunken" />
-                      <div className="p-2"><p className="text-xs font-medium">{n}</p><p className="tabular text-xs text-ink-secondary">{rs(p as number)}</p></div>
-                    </div>
-                  ))}
-                </div>
+                {/* Mirrors the two layouts the QR page draws (order/table/[qrToken]). */}
+                {f.menuLayout === "list" ? (
+                  <div className="rounded-xl bg-surface-raised px-3">
+                    {PREVIEW_ITEMS.map(([n, p, d]) => (
+                      <div key={n} className="flex gap-3 border-b border-border-subtle py-3 last:border-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium">{n}</p>
+                          <p className="mt-0.5 line-clamp-1 text-[11px] text-ink-secondary">{d}</p>
+                          <p className="tabular mt-1 text-xs font-semibold">{rs(p)}</p>
+                        </div>
+                        <div className="h-12 w-12 shrink-0 rounded-lg bg-surface-sunken" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {PREVIEW_ITEMS.slice(0, 2).map(([n, p]) => (
+                      <div key={n} className="overflow-hidden rounded-xl border border-border-subtle bg-surface-raised">
+                        <div className="aspect-[4/3] bg-surface-sunken" />
+                        <div className="p-2"><p className="text-xs font-medium">{n}</p><p className="tabular text-xs text-ink-secondary">{rs(p)}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {(f.wifiName || f.phone) && (
                   <div className="flex gap-3 rounded-xl bg-surface-raised p-2.5 text-[11px] text-ink-secondary">
                     {f.wifiName && <span className="flex items-center gap-1"><IconWifi className="h-3.5 w-3.5" />{f.wifiName}</span>}

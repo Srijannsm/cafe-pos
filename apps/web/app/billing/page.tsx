@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetchJson } from "../../lib/api";
 import { useRequireAuth, useCurrentUser } from "../../lib/useRequireAuth";
-import { useCafeSocket, chime } from "../../lib/useCafeSocket";
+import { useCafeSocket } from "../../lib/useCafeSocket";
 import { NavBar } from "../../components/NavBar";
 import { useToast } from "../../components/Toast";
 import { Button } from "../../components/ui/Button";
@@ -72,7 +72,7 @@ export default function BillingCounter() {
     "floor.changed": () => load(),
     "table.request": (p: { type: string; tableNumber: string }) => {
       if (p.type === "request_bill") {
-        chime(2);
+        // (sound comes from the NotificationBell)
         showToast(`Table ${p.tableNumber} asked for the bill`, "info");
       }
       load();

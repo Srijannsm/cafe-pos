@@ -2,6 +2,7 @@ import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundExc
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OrdersService } from '../orders/orders.service.js';
 import { OrdersGateway } from '../orders/orders.gateway.js';
+import { NotificationsService } from '../orders/notifications.service.js';
 import { PlaceOrderDto, TableRequestDto } from './dto/place-order.dto.js';
 import { assertQrOrderingAllowed, hasFeature } from '../subscription/plan-limits.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -12,6 +13,7 @@ export class PublicOrderingService {
     private prisma: PrismaService,
     private ordersService: OrdersService,
     private gateway: OrdersGateway,
+    private notifications: NotificationsService,
   ) {}
 
   async findTableOrThrow(qrToken: string) {
@@ -163,6 +165,20 @@ export class PublicOrderingService {
     this.gateway.emitCafe(table.cafeId, 'qr.orderPlaced', {
       orderId: order.id, tableId: table.id, tableNumber: table.tableNumber, items: dto.items.length,
     });
+    const names = new Map(
+      (await this.prisma.menuItem.findMany({
+        where: { cafeId: table.cafeId, id: { in: dto.items.map((i) => i.menuItemId) } },
+        select: { id: true, name: true },
+      })).map((m) => [m.id, m.name]),
+    );
+    await this.notifications.notify(table.cafeId, 'qr_order', {
+      orderId: order.id,
+      tableNumber: table.tableNumber,
+      data: {
+        count: dto.items.reduce((n, i) => n + i.quantity, 0),
+        items: dto.items.map((i) => `${i.quantity}x ${names.get(i.menuItemId) ?? 'Item'}`),
+      },
+    });
     return this.customerOrder(table.cafeId, table.id);
   }
 
@@ -185,6 +201,11 @@ export class PublicOrderingService {
     });
     this.gateway.emitCafe(table.cafeId, 'table.request', {
       id: req.id, type: req.type, tableId: table.id, tableNumber: table.tableNumber,
+    });
+    const active = await this.findActiveOrder(table.cafeId, table.id);
+    await this.notifications.notify(table.cafeId, req.type === 'request_bill' ? 'request_bill' : 'call_waiter', {
+      orderId: active?.id ?? null,
+      tableNumber: table.tableNumber,
     });
     this.gateway.emitFloorChanged(table.cafeId);
     return { ok: true };

@@ -7,11 +7,12 @@
 // portrait tablets: the same three views behind a segmented control.
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { apiFetchJson } from "../../lib/api";
+import { apiFetchJson, getCurrentUser } from "../../lib/api";
+import { Modal } from "../../components/ui/Modal";
 import { useRequireAuth } from "../../lib/useRequireAuth";
 import { useCafeSocket, chime } from "../../lib/useCafeSocket";
 import { useCafeSettings } from "../../lib/CafeSettingsContext";
-import { IconChevronLeft, IconSound, IconCheck, IconUndo, IconQrCode, IconTruck, IconClock, IconFlame, IconBell, IconBarChart } from "../../components/icons";
+import { IconChevronLeft, IconSound, IconCheck, IconUndo, IconQrCode, IconTruck, IconClock, IconFlame, IconBell, IconBarChart, IconAlert, IconXCircle } from "../../components/icons";
 import { tableLabel } from "../../lib/format";
 
 type Station = "kitchen" | "bar" | "hookah";
@@ -23,7 +24,10 @@ type KdsItem = {
 type KdsTicket = {
   key: string; orderId: number; round: number; table: string; orderType: "dine_in" | "takeaway"; source: "staff" | "qr";
   waiter: string | null; notes: string | null; sentAt: string; readyAt: string | null; items: KdsItem[]; orderAllReady: boolean;
+  cancelRequest: { id: number; reason: string; requestedBy: string; createdAt: string } | null;
 };
+
+const CANCEL_REASONS = ["Customer left", "Waited too long", "Ordered by mistake", "Duplicate order"];
 type Board = {
   now: string; cooking: KdsTicket[]; ready: KdsTicket[];
   counts: Record<Station | "all", number>;
@@ -66,6 +70,8 @@ export default function KitchenDisplay() {
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [cancelFor, setCancelFor] = useState<KdsTicket | null>(null);
   const known = useRef<Set<string> | null>(null);
   const skew = useRef(0); // server clock minus this device's clock
   const stationRef = useRef(station);
@@ -75,6 +81,7 @@ export default function KitchenDisplay() {
     const s = new URLSearchParams(window.location.search).get("station") as Station | null;
     if (s && LIMITS[s]) setStation(s);
     setSound(localStorage.getItem("kdsSound") !== "0");
+    setIsAdmin(getCurrentUser()?.role === "admin");
   }, []);
 
   const load = useCallback(async () => {
@@ -164,6 +171,9 @@ export default function KitchenDisplay() {
     return run(key, () => Promise.all(ids.map((id) => apiFetchJson(`/orders/items/${id}/recall`, { method: "PATCH" }))));
   };
   const pickedUp = (t: KdsTicket) => run(t.key, () => apiFetchJson(`/orders/${t.orderId}/serve`, { method: "PATCH" }));
+  // Admin approves / declines a "customer left" request right on the ticket.
+  const decideCancel = (t: KdsTicket, approve: boolean) =>
+    t.cancelRequest && run(t.key, () => apiFetchJson(`/cancel-requests/${t.cancelRequest!.id}/${approve ? "approve" : "reject"}`, { method: "POST" }));
 
   function chooseStation(s: Station | "all") {
     setStation(s);
@@ -257,6 +267,7 @@ export default function KitchenDisplay() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {cooking.map((t) => (
                 <TicketCard key={t.key} t={t} now={serverNow} isNew={fresh.has(t.key)} busy={busy.has(t.key)} showStation={station === "all"}
+                  isAdmin={isAdmin} onCancel={() => setCancelFor(t)} onDecide={(ok) => decideCancel(t, ok)}
                   onItem={(i) => (i.status === "ready" ? recall(t.key, [i.id]) : markReady(t.key, [i.id]))}
                   onDone={() => markReady(t.key, t.items.filter(isActive).map((i) => i.id))} />
               ))}
@@ -274,7 +285,7 @@ export default function KitchenDisplay() {
               <p className="rounded-xl border border-dashed border-border-subtle p-6 text-center text-sm text-ink-faint">Finished tickets wait here until a waiter picks them up.</p>
             ) : (
               <ul className="space-y-2">
-                {readyLane.map((t) => <ReadyCard key={t.key} t={t} now={serverNow} busy={busy.has(t.key)} onRecall={() => recall(t.key, t.items.filter((i) => i.status === "ready").map((i) => i.id))} onPickedUp={() => pickedUp(t)} />)}
+                {readyLane.map((t) => <ReadyCard key={t.key} t={t} now={serverNow} busy={busy.has(t.key)} isAdmin={isAdmin} onCancel={() => setCancelFor(t)} onDecide={(ok) => decideCancel(t, ok)} onRecall={() => recall(t.key, t.items.filter((i) => i.status === "ready").map((i) => i.id))} onPickedUp={() => pickedUp(t)} />)}
               </ul>
             )}
           </div>
@@ -304,7 +315,91 @@ export default function KitchenDisplay() {
           </div>
         </aside>
       </div>
+
+      <CancelDialog ticket={cancelFor} isAdmin={isAdmin} onClose={() => setCancelFor(null)} onDone={() => { setCancelFor(null); load(); }} />
     </main>
+  );
+}
+
+/** "Customer left" -- ask to cancel an order the kitchen already has. */
+function CancelDialog({ ticket, isAdmin, onClose, onDone }: { ticket: KdsTicket | null; isAdmin: boolean; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState("");
+  const [other, setOther] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { setReason(""); setOther(""); setErr(null); }, [ticket]);
+  const final = (reason === "Other" ? other : reason).trim();
+  const live = ticket?.items.filter((i) => !i.voided) ?? [];
+
+  async function submit() {
+    if (!ticket || final.length < 2) return;
+    setSaving(true); setErr(null);
+    try {
+      await apiFetchJson("/cancel-requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderId: ticket.orderId, reason: final }) });
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not send the request -- try again.");
+    }
+    setSaving(false);
+  }
+
+  return (
+    <Modal open={!!ticket} onClose={onClose} title="Cancel order" size="sm">
+      {ticket && (
+        <div className="space-y-4">
+          <div className="rounded-xl bg-surface-sunken p-3">
+            <p className="text-sm font-semibold">{tableLabel(ticket.table)} · Order #{ticket.orderId}</p>
+            <p className="mt-0.5 line-clamp-2 text-sm text-ink-secondary">{live.map((i) => `${i.quantity}× ${i.name}`).join(", ")}</p>
+          </div>
+          <p className="text-sm text-ink-secondary">
+            {isAdmin
+              ? "The kitchen has already started this order. As an admin, this cancels it immediately and frees the table."
+              : "The kitchen has already started this order, so an admin must approve the cancellation. Keep the food on hold until then."}
+          </p>
+          <div>
+            <p className="mb-2 text-sm font-medium">Reason</p>
+            <div className="flex flex-wrap gap-2">
+              {[...CANCEL_REASONS, "Other"].map((r) => (
+                <button key={r} type="button" onClick={() => setReason(r)} aria-pressed={reason === r}
+                  className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${reason === r ? "border-brand bg-brand-tint text-brand-strong" : "border-border-subtle text-ink-secondary hover:bg-surface-sunken"}`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            {reason === "Other" && (
+              <input autoFocus value={other} onChange={(e) => setOther(e.target.value)} maxLength={200} placeholder="Describe the reason"
+                className="mt-3 w-full rounded-lg border border-border-subtle bg-surface-raised px-3 py-2 text-sm outline-none focus:border-brand" />
+            )}
+          </div>
+          {err && <p role="alert" className="rounded-lg bg-status-danger-tint px-3 py-2 text-sm text-status-danger-ink">{err}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-ink-secondary hover:bg-surface-sunken">Keep order</button>
+            <button type="button" onClick={submit} disabled={saving || final.length < 2}
+              className="rounded-lg bg-status-danger px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:opacity-40">
+              {saving ? "Sending…" : isAdmin ? "Cancel order" : "Send for approval"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Shown on a ticket while a cancellation waits for an admin. */
+function CancelBanner({ t, now, isAdmin, busy, onDecide }: { t: KdsTicket; now: number; isAdmin: boolean; busy: boolean; onDecide: (approve: boolean) => void }) {
+  const c = t.cancelRequest!;
+  return (
+    <div className="border-b border-status-warning/40 bg-status-warning-tint px-4 py-2.5 text-status-warning-ink">
+      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider"><IconAlert className="h-3.5 w-3.5" />Cancellation requested</p>
+      <p className="mt-0.5 text-sm font-semibold">{c.reason}</p>
+      <p className="text-xs opacity-80">{c.requestedBy} · {clock(now - new Date(c.createdAt).getTime())} ago · {isAdmin ? "your approval is needed" : "waiting for admin — hold the food"}</p>
+      {isAdmin && (
+        <div className="mt-2 flex gap-2">
+          <button type="button" disabled={busy} onClick={() => onDecide(true)} className="rounded-lg bg-status-danger px-3 py-2 text-xs font-bold text-white disabled:opacity-40">Approve cancellation</button>
+          <button type="button" disabled={busy} onClick={() => onDecide(false)} className="rounded-lg border border-current/30 px-3 py-2 text-xs font-bold disabled:opacity-40">Decline</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -328,9 +423,9 @@ function Badges({ t }: { t: KdsTicket }) {
   );
 }
 
-function TicketCard({ t, now, isNew, busy, showStation, onItem, onDone }: {
-  t: KdsTicket; now: number; isNew: boolean; busy: boolean; showStation: boolean;
-  onItem: (i: KdsItem) => void; onDone: () => void;
+function TicketCard({ t, now, isNew, busy, showStation, isAdmin, onItem, onDone, onCancel, onDecide }: {
+  t: KdsTicket; now: number; isNew: boolean; busy: boolean; showStation: boolean; isAdmin: boolean;
+  onItem: (i: KdsItem) => void; onDone: () => void; onCancel: () => void; onDecide: (approve: boolean) => void;
 }) {
   const age = now - new Date(t.sentAt).getTime();
   const [warn, late] = limitsFor(t);
@@ -365,6 +460,7 @@ function TicketCard({ t, now, isNew, busy, showStation, onItem, onDone }: {
         </div>
       </div>
 
+      {t.cancelRequest && <CancelBanner t={t} now={now} isAdmin={isAdmin} busy={busy} onDecide={onDecide} />}
       {t.notes && <p className="border-b border-border-subtle bg-status-warning-tint px-4 py-2 text-sm font-semibold text-status-warning-ink">⚠ {t.notes}</p>}
 
       <ul className="flex-1 divide-y divide-border-subtle">
@@ -394,9 +490,15 @@ function TicketCard({ t, now, isNew, busy, showStation, onItem, onDone }: {
         })}
       </ul>
 
-      <div className="border-t border-border-subtle p-2">
+      <div className="flex gap-2 border-t border-border-subtle p-2">
+        {!t.cancelRequest && (
+          <button type="button" onClick={onCancel} disabled={busy} aria-label={`Cancel order ${t.orderId}`} title="Cancel order (customer left)"
+            className="flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border-subtle px-3.5 text-sm font-semibold text-ink-secondary transition hover:border-status-danger/50 hover:text-status-danger disabled:opacity-40">
+            <IconXCircle className="h-4 w-4" /><span className="hidden min-[420px]:inline">Cancel</span>
+          </button>
+        )}
         <button type="button" onClick={onDone} disabled={busy || left.length === 0}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-status-success py-3.5 text-base font-bold text-black transition active:scale-[0.99] disabled:opacity-40">
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-status-success py-3.5 text-base font-bold text-black transition active:scale-[0.99] disabled:opacity-40">
           <IconCheck className="h-5 w-5" />
           {left.length === live.length ? `Done · ${plural(left.reduce((n, i) => n + i.quantity, 0), "item")}` : `Finish ${left.length} left · ${doneCount}/${live.length} done`}
         </button>
@@ -405,7 +507,10 @@ function TicketCard({ t, now, isNew, busy, showStation, onItem, onDone }: {
   );
 }
 
-function ReadyCard({ t, now, busy, onRecall, onPickedUp }: { t: KdsTicket; now: number; busy: boolean; onRecall: () => void; onPickedUp: () => void }) {
+function ReadyCard({ t, now, busy, isAdmin, onRecall, onPickedUp, onCancel, onDecide }: {
+  t: KdsTicket; now: number; busy: boolean; isAdmin: boolean;
+  onRecall: () => void; onPickedUp: () => void; onCancel: () => void; onDecide: (approve: boolean) => void;
+}) {
   const waited = t.readyAt ? now - new Date(t.readyAt).getTime() : 0;
   const cook = t.readyAt ? new Date(t.readyAt).getTime() - new Date(t.sentAt).getTime() : null;
   const stale = waited > 5 * 60000; // food going cold on the pass
@@ -423,10 +528,17 @@ function ReadyCard({ t, now, busy, onRecall, onPickedUp }: { t: KdsTicket; now: 
         <p className={`tabular shrink-0 text-sm font-bold ${stale ? "text-status-warning" : "text-status-success"}`}>Ready {clock(waited)}</p>
       </div>
       <p className="mt-2 text-sm text-ink-secondary">{shown.map((i) => `${i.quantity}× ${i.name}`).join(" · ")}</p>
+      {t.cancelRequest && <div className="-mx-3 mt-3"><CancelBanner t={t} now={now} isAdmin={isAdmin} busy={busy} onDecide={onDecide} /></div>}
       <div className="mt-3 flex gap-2">
         <button type="button" onClick={onRecall} disabled={busy} className="flex items-center gap-1.5 rounded-lg border border-border-subtle px-3 py-2 text-sm font-semibold text-ink-secondary hover:text-ink-primary disabled:opacity-40">
           <IconUndo className="h-4 w-4" />Recall
         </button>
+        {!t.cancelRequest && (
+          <button type="button" onClick={onCancel} disabled={busy} aria-label={`Cancel order ${t.orderId}`} title="Cancel order (customer left)"
+            className="flex items-center rounded-lg border border-border-subtle px-2.5 py-2 text-ink-secondary hover:text-status-danger disabled:opacity-40">
+            <IconXCircle className="h-4 w-4" />
+          </button>
+        )}
         {t.orderAllReady ? (
           <button type="button" onClick={onPickedUp} disabled={busy} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-bold text-on-brand disabled:opacity-40">
             <IconCheck className="h-4 w-4" />Picked up

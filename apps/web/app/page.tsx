@@ -15,7 +15,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { Button } from "../components/ui/Button";
 import { FilterPills } from "../components/ui/FilterPills";
 import { InlineAlert } from "../components/ui/InlineAlert";
-import { useCafeSocket, chime } from "../lib/useCafeSocket";
+import { useCafeSocket } from "../lib/useCafeSocket";
 import { IconHand, IconReceipt as IconBill } from "../components/icons";
 
 type MergedFromTable = { id: number; tableNumber: string };
@@ -87,16 +87,17 @@ export default function Home() {
   // if Wi-Fi blips (it used to poll every 5s, which hammered the API).
   const { connected } = useCafeSocket(ready, {
     "floor.changed": () => loadTables(),
+    // Sounds come from the NotificationBell in the nav bar; this only shows the banner.
     "table.request": (p: { tableNumber: string; type: string }) => {
-      chime(3);
       setMessage(`Table ${p.tableNumber} ${p.type === "request_bill" ? "asked for the bill" : "is calling a waiter"}`);
       loadTables();
     },
     "qr.orderPlaced": (p: { tableNumber: string }) => {
-      chime(2);
       setMessage(`New QR order from Table ${p.tableNumber} — confirm it to send to the kitchen`);
       loadTables();
     },
+    // Ready / recalled: the NotificationBell shows these (pop-up + history).
+    "order.itemRecalled": () => loadTables(),
   });
 
   useEffect(() => {

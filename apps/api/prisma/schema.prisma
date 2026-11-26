@@ -212,6 +212,8 @@ model Cafe {
   tableRequests  TableRequest[]
 
   @@map("cafes")
+  notifications  Notification[]
+  cancelRequests OrderCancelRequest[]
 }
 
 model User {
@@ -380,6 +382,7 @@ model Order {
   payments   Payment[]
 
   @@map("orders")
+  cancelRequests OrderCancelRequest[]
 }
 
 model OrderItem {
@@ -663,4 +666,50 @@ model PlanConfig {
   updatedAt    DateTime         @updatedAt
 
   @@map("plan_configs")
+}
+
+/// Staff notification log. Live screens get each row over the socket
+/// ("notification" event); a screen that was closed/asleep fetches what it
+/// missed from GET /notifications. Read/unread is tracked per device.
+model Notification {
+  id          Int      @id @default(autoincrement())
+  cafeId      Int
+  /// qr_order | call_waiter | request_bill | ready | recalled | sent | voided
+  type        String
+  orderId     Int?
+  tableNumber String?
+  /// Details for display: items ("2x Momo"), waiter, cookSecs, reason, count
+  data        Json?
+  createdAt   DateTime @default(now())
+
+  cafe Cafe @relation(fields: [cafeId], references: [id], onDelete: Cascade)
+
+  @@index([cafeId, createdAt])
+  @@map("notifications")
+}
+
+/// "Customer left -- please cancel": raised from the kitchen screen once the
+/// kitchen has the order; only an admin can approve it (which runs the
+/// normal admin cancel: items voided, stock back, table freed, audit log).
+model OrderCancelRequest {
+  id            Int       @id @default(autoincrement())
+  cafeId        Int
+  orderId       Int
+  reason        String
+  /// pending | approved | rejected
+  status        String    @default("pending")
+  requestedById Int?
+  /// Staff name at the time, for display
+  requestedBy   String
+  decidedById   Int?
+  decidedBy     String?
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  cafe  Cafe  @relation(fields: [cafeId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([cafeId, status])
+  @@index([orderId, status])
+  @@map("order_cancel_requests")
 }

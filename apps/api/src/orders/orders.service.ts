@@ -8,6 +8,7 @@ import { ApplyDiscountDto } from './dto/billing.dto.js';
 import { ListBillsDto } from './dto/list-bills.dto.js';
 import { Prisma, OrderStatus, OrderSource } from '../generated/prisma/client.js';
 import { OrdersGateway } from './orders.gateway.js';
+import { NotificationsService } from './notifications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { assertNotOverdue, hasFeature } from '../subscription/plan-limits.js';
 import type { CurrentUserPayload } from '../auth/current-user.decorator.js';
@@ -85,6 +86,7 @@ export class OrdersService {
     private prisma: PrismaService,
     private ordersGateway: OrdersGateway,
     private audit: AuditService,
+    private notifications: NotificationsService,
   ) {}
 
   async findAll(cafeId: number, status?: OrderStatus) {
@@ -294,7 +296,11 @@ export class OrdersService {
   async sendToKitchen(cafeId: number, orderId: number) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, cafeId },
-      include: { orderItems: true },
+      include: {
+        orderItems: { include: { menuItem: { select: { name: true } } } },
+        table: { select: { tableNumber: true } },
+        waiter: { select: { name: true } },
+      },
     });
 
     if (!order) {
@@ -322,13 +328,20 @@ export class OrdersService {
       return tx.order.update({ where: { id: orderId }, data: { status: 'preparing' } });
     });
 
-    this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.id });
+    const count = pendingItems.reduce((n, i) => n + i.quantity, 0);
+    this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.id, tableNumber: order.table?.tableNumber, items: count });
+    await this.notifications?.notify(cafeId, 'sent', {
+      orderId: updated.id,
+      tableNumber: order.table?.tableNumber,
+      data: { count, items: pendingItems.map((i) => `${i.quantity}x ${i.menuItem?.name ?? 'Item'}`), waiter: order.waiter?.name ?? null },
+    });
     return updated;
   }
 
   async markItemReady(cafeId: number, orderItemId: number) {
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: orderItemId, order: { cafeId } },
+      include: { menuItem: { select: { name: true } }, order: { select: { table: { select: { tableNumber: true } }, waiter: { select: { name: true } } } } },
     });
 
     if (!orderItem) {
@@ -348,8 +361,22 @@ export class OrdersService {
       data: { status: 'ready', readyAt: new Date() },
     });
 
-    this.ordersGateway.emitOrderItemReady(cafeId, { orderId: updated.orderId, orderItemId: updated.id });
+    this.ordersGateway.emitOrderItemReady(cafeId, {
+      orderId: updated.orderId,
+      orderItemId: updated.id,
+      tableNumber: orderItem.order?.table?.tableNumber,
+      items: [`${orderItem.quantity}x ${orderItem.menuItem?.name ?? 'Item'}`],
+    });
     this.ordersGateway.emitFloorChanged(cafeId);
+    await this.notifications?.notify(cafeId, 'ready', {
+      orderId: updated.orderId,
+      tableNumber: orderItem.order?.table?.tableNumber,
+      data: {
+        items: [`${orderItem.quantity}x ${orderItem.menuItem?.name ?? 'Item'}`],
+        waiter: orderItem.order?.waiter?.name ?? null,
+        cookSecs: orderItem.sentAt ? Math.round((Date.now() - orderItem.sentAt.getTime()) / 1000) : null,
+      },
+    });
     return updated;
   }
 
@@ -357,12 +384,27 @@ export class OrdersService {
   async recallItem(cafeId: number, orderItemId: number) {
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: orderItemId, order: { cafeId, status: { in: ['preparing'] } } },
+      include: { menuItem: { select: { name: true } }, order: { select: { table: { select: { tableNumber: true } } } } },
     });
     if (!orderItem || orderItem.status !== 'ready') {
       throw new BadRequestException('Only a ready item on an open ticket can be recalled');
     }
     const updated = await this.prisma.orderItem.update({ where: { id: orderItemId }, data: { status: 'pending', readyAt: null } });
-    this.ordersGateway.emitOrderSentToKitchen(cafeId, { orderId: updated.orderId });
+    // Its own event (not order.sentToKitchen): a recall isn't a new order,
+    // so it must not show up as "sent to kitchen" in notifications.
+    // The waiter must hear about this: they may be about to serve it.
+    this.ordersGateway.emitCafe(cafeId, 'order.itemRecalled', {
+      orderId: updated.orderId,
+      orderItemId,
+      tableNumber: orderItem.order?.table?.tableNumber,
+      items: [`${orderItem.quantity}x ${orderItem.menuItem?.name ?? 'Item'}`],
+    });
+    this.ordersGateway.emitFloorChanged(cafeId);
+    await this.notifications?.notify(cafeId, 'recalled', {
+      orderId: updated.orderId,
+      tableNumber: orderItem.order?.table?.tableNumber,
+      data: { items: [`${orderItem.quantity}x ${orderItem.menuItem?.name ?? 'Item'}`] },
+    });
     return updated;
   }
 
@@ -837,7 +879,7 @@ export class OrdersService {
   async voidItem(cafeId: number, orderItemId: number, reason: string, actor: Actor) {
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: orderItemId, order: { cafeId } },
-      include: { order: { select: { id: true, status: true } }, menuItem: true },
+      include: { order: { select: { id: true, status: true, table: { select: { tableNumber: true } } } }, menuItem: true },
     });
     if (!orderItem) throw new NotFoundException(`Order item ${orderItemId} does not exist`);
     if (orderItem.voidedAt) throw new BadRequestException('Already voided');
@@ -880,6 +922,11 @@ export class OrdersService {
 
     this.ordersGateway.emitCafe(cafeId, 'order.itemVoided', { orderId: orderItem.orderId, orderItemId });
     this.ordersGateway.emitFloorChanged(cafeId);
+    await this.notifications?.notify(cafeId, 'voided', {
+      orderId: orderItem.orderId,
+      tableNumber: orderItem.order?.table?.tableNumber,
+      data: { items: [`${orderItem.quantity}x ${orderItem.menuItem.name}`], reason: reason.trim() },
+    });
     return voided;
   }
 

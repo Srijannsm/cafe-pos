@@ -9,6 +9,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OrdersGateway } from './orders.gateway.js';
+import { NotificationsService } from './notifications.service.js';
+import { CancelRequestsService } from './cancel-requests.service.js';
 import { Station } from '../generated/prisma/client.js';
 
 export type KdsItem = {
@@ -36,13 +38,20 @@ export type KdsTicket = {
   items: KdsItem[];
   /** Every item on the whole order is ready -> the waiter can serve it. */
   orderAllReady: boolean;
+  /** "Customer left" request waiting for an admin, if any. */
+  cancelRequest: { id: number; reason: string; requestedBy: string; createdAt: Date } | null;
 };
 
 const STATIONS: Station[] = ['kitchen', 'bar', 'hookah'];
 
 @Injectable()
 export class KitchenService {
-  constructor(private prisma: PrismaService, private gateway: OrdersGateway) {}
+  constructor(
+    private prisma: PrismaService,
+    private gateway: OrdersGateway,
+    private notifications: NotificationsService,
+    private cancelRequests: CancelRequestsService,
+  ) {}
 
   async board(cafeId: number, station?: Station, tzMinutes = 345) {
     const orders = await this.prisma.order.findMany({
@@ -58,6 +67,7 @@ export class KitchenService {
       },
     });
 
+    const cancels = await this.cancelRequests.pendingFor(cafeId, orders.map((o) => o.id));
     const cooking: KdsTicket[] = [];
     const ready: KdsTicket[] = [];
     const counts: Record<'all' | Station, number> = { all: 0, kitchen: 0, bar: 0, hookah: 0 };
@@ -114,6 +124,7 @@ export class KitchenService {
             readyAt: i.readyAt,
           })),
           orderAllReady,
+          cancelRequest: cancels.get(o.id) ?? null,
         };
         if (pending.length > 0) {
           cooking.push(ticket);
@@ -172,15 +183,36 @@ export class KitchenService {
   async markReady(cafeId: number, ids: number[]) {
     const items = await this.prisma.orderItem.findMany({
       where: { id: { in: ids }, order: { cafeId }, status: 'pending', voidedAt: null, sentToKitchen: true },
-      select: { id: true, orderId: true },
+      select: {
+        id: true, orderId: true, quantity: true, sentAt: true,
+        menuItem: { select: { name: true } },
+        order: { select: { table: { select: { tableNumber: true } }, waiter: { select: { name: true } } } },
+      },
     });
     if (items.length === 0) throw new BadRequestException('Nothing to mark ready -- it may already be done');
     await this.prisma.orderItem.updateMany({
       where: { id: { in: items.map((i) => i.id) } },
       data: { status: 'ready', readyAt: new Date() },
     });
+    // One event per order, listing everything that just became ready.
     for (const orderId of new Set(items.map((i) => i.orderId))) {
-      this.gateway.emitOrderItemReady(cafeId, { orderId, orderItemId: items.find((i) => i.orderId === orderId)!.id });
+      const mine = items.filter((i) => i.orderId === orderId);
+      this.gateway.emitOrderItemReady(cafeId, {
+        orderId,
+        orderItemId: mine[0]!.id,
+        tableNumber: mine[0]!.order?.table?.tableNumber,
+        items: mine.map((i) => `${i.quantity}x ${i.menuItem?.name ?? 'Item'}`),
+      });
+      const firstSent = Math.min(...mine.map((i) => i.sentAt?.getTime() ?? Date.now()));
+      await this.notifications?.notify(cafeId, 'ready', {
+        orderId,
+        tableNumber: mine[0]!.order?.table?.tableNumber,
+        data: {
+          items: mine.map((i) => `${i.quantity}x ${i.menuItem?.name ?? 'Item'}`),
+          waiter: mine[0]!.order?.waiter?.name ?? null,
+          cookSecs: Math.round((Date.now() - firstSent) / 1000),
+        },
+      });
     }
     this.gateway.emitFloorChanged(cafeId);
     return { updated: items.length };

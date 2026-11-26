@@ -25,7 +25,15 @@ type StaffRow = {
   avatarUrl: string | null;
 };
 
-const ROLES: Role[] = ["admin", "cashier", "waiter"];
+// Least to most access -- each role includes everything in the one before it.
+const ROLES: Role[] = ["waiter", "cashier", "admin"];
+
+// Shown under the role picker so it's clear which one to choose.
+const ROLE_HELP: Record<Role, string> = {
+  waiter: "Takes orders, sends them to the kitchen, serves tables, and can print a bill. Can't take payment or give discounts.",
+  cashier: "Everything a waiter can do, plus taking payment, discounts, bills history, the cash drawer and stock. Pick this for staff who both serve and collect payment.",
+  admin: "Full access: everything a cashier can do, plus menu, staff, settings, reports and approving cancellations.",
+};
 
 function roleLabel(role: Role) {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -210,6 +218,9 @@ export default function UsersManagementPage() {
           <Button type="submit" loading={saving} disabled={newPin.length !== 4}>
             Add staff
           </Button>
+          <p className="body-sm basis-full text-ink-secondary" aria-live="polite">
+            <span className="font-semibold text-ink-primary">{roleLabel(newRole)}:</span> {ROLE_HELP[newRole]}
+          </p>
         </form>
       </SectionCard>
 
@@ -324,8 +335,9 @@ export default function UsersManagementPage() {
                       ))}
                     </Select>
                   ) : (
-                    <span className="body-md text-ink-secondary">{roleLabel(user.role)}</span>
+                    <span className="body-md text-ink-secondary" title={ROLE_HELP[user.role]}>{roleLabel(user.role)}</span>
                   )}
+                  {isEditing && <p className="mt-1.5 max-w-[16rem] text-xs leading-snug text-ink-faint">{ROLE_HELP[draft.role]}</p>}
                 </td>
                 <td className="py-4 pr-4">
                   <button

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { NotificationBell } from "./NotificationBell";
 import Link from "next/link";
 import { StaffAvatar } from "./ui/StaffAvatar";
 
@@ -91,6 +92,7 @@ export function NavBar() {
 
         {user && (
           <div className="flex items-center gap-3">
+            <NotificationBell authReady />
             <span className="hidden items-center gap-2 sm:flex">
               <span className="body-sm text-ink-secondary">
                 <span className="font-semibold text-ink-primary">{user.name}</span> · {user.role}

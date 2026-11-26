@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OrdersService, computeTotals } from './orders.service.js';
+import { NotificationsService } from './notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OrdersGateway } from './orders.gateway.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -97,6 +98,7 @@ describe('OrdersService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: OrdersGateway, useValue: gateway },
         { provide: AuditService, useValue: audit },
+        { provide: NotificationsService, useValue: { notify: vi.fn() } },
       ],
     }).compile();
     service = module.get(OrdersService);
@@ -174,8 +176,8 @@ describe('OrdersService', () => {
       });
       prisma.order.update.mockResolvedValue({ id: 1 });
       await service.sendToKitchen(CAFE_ID, 1);
-      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({ where: { id: { in: [2] } }, data: { sentToKitchen: true } });
-      expect(gateway.emitOrderSentToKitchen).toHaveBeenCalled();
+      expect(prisma.orderItem.updateMany).toHaveBeenCalledWith({ where: { id: { in: [2] } }, data: { sentToKitchen: true, sentAt: expect.any(Date) } });
+      expect(gateway.emitOrderSentToKitchen).toHaveBeenCalledWith(CAFE_ID, expect.objectContaining({ orderId: 1 }));
     });
 
     it('throws when nothing is new', async () => {

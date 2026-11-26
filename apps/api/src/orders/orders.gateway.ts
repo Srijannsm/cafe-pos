@@ -6,14 +6,23 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { socketCors } from '../cors.js';
 
+// Payloads carry the table number and item names so a screen can show a
+// useful notification ("T4 -- 2x Momo ready") without fetching the order.
 export type OrderSentToKitchenEvent = {
   orderId: number;
+  tableNumber?: string;
+  /** Total quantity in this round. */
+  items?: number;
 };
 
 export type OrderItemReadyEvent = {
   orderId: number;
   orderItemId: number;
+  tableNumber?: string;
+  /** e.g. ["2x Momo", "1x Latte"] -- what just became ready. */
+  items?: string[];
 };
 
 // Broadcasts order-lifecycle events to every connected client *of the same
@@ -24,11 +33,12 @@ export type OrderItemReadyEvent = {
 //   order.sentToKitchen  -- KDS gets a new/updated ticket
 //   order.itemReady      -- waiter screen shows "ready to serve"
 //   order.itemVoided     -- KDS strikes the item through
+//   order.itemRecalled   -- KDS put a ready item back on the board
 //   floor.changed        -- tables/billing refetch (replaces 15s polling)
 //   qr.orderPlaced       -- a customer submitted from the table QR
 //   table.request        -- "Call waiter" / "Request bill" tapped
 @WebSocketGateway({
-  cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
+  cors: socketCors,
 })
 export class OrdersGateway implements OnGatewayConnection {
   private readonly logger = new Logger(OrdersGateway.name);
@@ -59,12 +69,12 @@ export class OrdersGateway implements OnGatewayConnection {
   }
 
   emitOrderSentToKitchen(cafeId: number, payload: OrderSentToKitchenEvent) {
-    this.server.to(cafeRoom(cafeId)).emit('order.sentToKitchen', payload);
+    this.server?.to(cafeRoom(cafeId)).emit('order.sentToKitchen', payload);
     this.emitFloorChanged(cafeId);
   }
 
   emitOrderItemReady(cafeId: number, payload: OrderItemReadyEvent) {
-    this.server.to(cafeRoom(cafeId)).emit('order.itemReady', payload);
+    this.server?.to(cafeRoom(cafeId)).emit('order.itemReady', payload);
   }
 
   emitCafe(cafeId: number, event: string, payload: unknown) {
